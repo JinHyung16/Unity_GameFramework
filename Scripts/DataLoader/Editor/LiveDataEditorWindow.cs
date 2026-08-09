@@ -374,8 +374,16 @@ namespace Game_DataLoader
                 {
                     long v = val.Value<long>();
                     string s = EditorGUILayout.DelayedTextField(field, v.ToString(CultureInfo.InvariantCulture));
-                    if (long.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out long nv) && nv != v)
-                        CommitEdit(m, row, field, new JValue(nv));
+                    if (long.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out long nv))
+                    {
+                        if (nv != v) CommitEdit(m, row, field, new JValue(nv));
+                    }
+                    // float 컬럼이라도 값이 1이면 JSON에선 Integer로 읽힌다.
+                    // 정수 파싱만 하면 1.5 같은 입력이 조용히 씹히므로 실수도 받아준다.
+                    else if (double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out double nd))
+                    {
+                        CommitEdit(m, row, field, new JValue(nd));
+                    }
                     break;
                 }
                 case JTokenType.Float:
@@ -637,7 +645,8 @@ namespace Game_DataLoader
                 case JTokenType.Boolean:
                     return new JValue(bool.TryParse(s, out bool b) && b);
                 case JTokenType.Integer:
-                    return new JValue(long.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out long l) ? l : 0L);
+                    if (long.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out long l)) return new JValue(l);
+                    return new JValue(double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out double dv) ? dv : 0d);
                 case JTokenType.Float:
                     return new JValue(double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out double d) ? d : 0d);
                 case JTokenType.Array:

@@ -100,18 +100,42 @@ namespace Game_UIFramework
         /// </summary>
         public void Preload<T>(string path, int count) where T : BaseComponent
         {
+            if (_pooled.TryGetValue(path, out Stack<BaseComponent> stack) == false)
+            {
+                stack = new Stack<BaseComponent>();
+                _pooled[path] = stack;
+            }
+
             for (int i = 0; i < count; i++)
             {
-                var comp = CreateNew<T>(path);
+                // 프리로드는 "꺼낸 적 없는" 인스턴스를 쌓아두는 것이므로
+                // OnSpawn/OnDespawn을 태우지 않는다. (Get 시점에 OnSpawn이 불린다)
+                var comp = InstantiateNew<T>(path);
                 if (comp == null)
                 {
                     return;
                 }
-                Release(comp);
+                comp.gameObject.SetActive(false);
+                comp.CachedTransform.SetParent(_root, false);
+                stack.Push(comp);
             }
         }
 
         private T CreateNew<T>(string path) where T : BaseComponent
+        {
+            var comp = InstantiateNew<T>(path);
+            if (comp == null)
+            {
+                return null;
+            }
+
+            _activePaths[comp] = path;
+            (comp as IPoolable)?.OnSpawn();
+            return comp;
+        }
+
+        /// <summary>프리팹을 찍기만 한다. 풀 장부 등록도, 수명 콜백도 여기서는 하지 않는다</summary>
+        private T InstantiateNew<T>(string path) where T : BaseComponent
         {
             var prefab = Resources.Load<GameObject>(path);
             if (prefab == null)
@@ -131,8 +155,6 @@ namespace Game_UIFramework
                 return null;
             }
 
-            _activePaths[comp] = path;
-            (comp as IPoolable)?.OnSpawn();
             return comp;
         }
     }

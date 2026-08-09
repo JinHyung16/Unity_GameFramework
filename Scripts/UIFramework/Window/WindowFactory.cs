@@ -38,7 +38,9 @@ namespace Game_UIFramework
                 return null;
             }
 
-            window.gameObject.SetActive(true);
+            // 생성 직후 상태는 Closed다. 여기서 켜두면 "보이는데 Close()로는 닫히지 않는" 창이 되므로
+            // 꺼둔 채로 넘기고, 실제 활성화는 BaseWindow.OpenInternal이 담당한다.
+            window.gameObject.SetActive(false);
             return window;
         }
     }

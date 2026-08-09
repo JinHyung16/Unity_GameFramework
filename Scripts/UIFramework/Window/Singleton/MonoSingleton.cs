@@ -11,7 +11,7 @@ namespace Game_UIFramework
         {
             get
             {
-                if (_isDestroyed)
+                if (_isDestroyed || _isQuitting)
                     return null;
 
                 if (_instance == null)
@@ -22,10 +22,11 @@ namespace Game_UIFramework
             }
         }
 
-        public static bool IsValidInstance => _instance != null && !_isDestroyed;
+        public static bool IsValidInstance => _instance != null && !_isDestroyed && !_isQuitting;
 
         private static T _instance;
         private static bool _isDestroyed = false;
+        private static bool _isQuitting = false;
 
         protected virtual void Awake()
         {
@@ -37,7 +38,13 @@ namespace Game_UIFramework
 
             _instance = this as T;
             _isDestroyed = false;
+            _isQuitting = false;
             DontDestroyOnLoad(gameObject);
+        }
+
+        protected virtual void OnApplicationQuit()
+        {
+            _isQuitting = true;
         }
 
         protected virtual void OnDestroy()
@@ -69,6 +76,11 @@ namespace Game_UIFramework
         {
             get
             {
+                // 종료 중에는 새로 만들지 않는다. 다른 객체의 OnDestroy에서 Instance를 건드리면
+                // 파괴 직후에 유령 GameObject가 하나 더 생기기 때문이다.
+                if (_isQuitting)
+                    return null;
+
                 if (_instance == null)
                 {
                     CreateInstance();
@@ -77,9 +89,10 @@ namespace Game_UIFramework
             }
         }
 
-        public static bool IsValidInstance => _instance != null;
+        public static bool IsValidInstance => _instance != null && !_isQuitting;
 
         private static T _instance;
+        private static bool _isQuitting = false;
 
         protected virtual void Awake()
         {
@@ -90,6 +103,13 @@ namespace Game_UIFramework
             }
 
             _instance = this as T;
+            // 씬을 다시 열면 정상 동작해야 하므로 플래그는 여기서 되돌린다.
+            _isQuitting = false;
+        }
+
+        protected virtual void OnApplicationQuit()
+        {
+            _isQuitting = true;
         }
 
         protected virtual void OnDestroy()

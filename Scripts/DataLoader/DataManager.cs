@@ -121,24 +121,53 @@ namespace Game_DataLoader
             _initialized = false;
         }
 
+        private static void LogGameDataLabelMissing(string detail)
+        {
+            // 라벨/그룹 설정이 안 된 상태다. 예외를 그대로 흘리면 InitializeAsync를 await하지 않는
+            // 호출부에서 통째로 삼켜져 "데이터가 왜 안 뜨지" 상태가 되므로, 여기서 잡아 원인을 찍는다.
+            Debug.LogError(
+                $"[DataManager] Addressables 라벨 '{GameDataLabel}'로 JSON을 불러오지 못했습니다. ({detail})\n" +
+                "Window > Asset Management > Addressables > Groups 에서 Assets/GameData 의 JSON을 그룹에 등록하고 " +
+                $"라벨 '{GameDataLabel}'을 붙였는지 확인하세요.");
+        }
+
         private static async Task<Dictionary<string, string>> LoadJsonTextByNameAsync(CancellationToken cancellationToken)
         {
-            AsyncOperationHandle<IList<TextAsset>> handle =
-                Addressables.LoadAssetsAsync<TextAsset>(GameDataLabel, null);
+            AsyncOperationHandle<IList<TextAsset>> handle;
+            try
+            {
+                handle = Addressables.LoadAssetsAsync<TextAsset>(GameDataLabel, null);
+            }
+            catch (Exception e)
+            {
+                LogGameDataLabelMissing($"{e.GetType().Name} {e.Message}");
+                return new Dictionary<string, string>(0, StringComparer.Ordinal);
+            }
 
             try
             {
-                IList<TextAsset> assets = await handle.Task;
+                IList<TextAsset> assets;
+                try
+                {
+                    assets = await handle.Task;
+                }
+                catch (Exception e)
+                {
+                    LogGameDataLabelMissing($"{e.GetType().Name} {e.Message}");
+                    return new Dictionary<string, string>(0, StringComparer.Ordinal);
+                }
 
                 cancellationToken.ThrowIfCancellationRequested();
 
-                int capacity = assets != null ? assets.Count : 0;
-                var map = new Dictionary<string, string>(capacity, StringComparer.Ordinal);
-
-                if (assets == null)
+                if (handle.Status == AsyncOperationStatus.Failed || assets == null)
                 {
-                    return map;
+                    LogGameDataLabelMissing(handle.OperationException != null
+                        ? handle.OperationException.Message
+                        : "결과가 비어 있습니다");
+                    return new Dictionary<string, string>(0, StringComparer.Ordinal);
                 }
+
+                var map = new Dictionary<string, string>(assets.Count, StringComparer.Ordinal);
 
                 for (int i = 0; i < assets.Count; i++)
                 {

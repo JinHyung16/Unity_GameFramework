@@ -44,10 +44,11 @@ namespace Game_UIFramework
                 return;
 
             SetState(WindowStateType.Opening);
+            // 콜백/OnOpening보다 먼저 켠다. 꺼진 GameObject에서는 코루틴이 시작되지 않는다.
+            SetEnable(true);
             onOpenBefore?.Invoke();
             OnOpening();
             SetState(WindowStateType.Opened);
-            SetEnable(true);
             onOpenAfter?.Invoke();
         }
 
@@ -163,6 +164,7 @@ namespace Game_UIFramework
         protected override void OnDestroy()
         {
             _observers.Clear();
+            base.OnDestroy();
         }
 
         /// <summary>

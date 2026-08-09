@@ -29,10 +29,10 @@ namespace Game_UIFramework
             _uiCamera = uiCamera;
         }
         
-        // 깊이 관리
+        // 깊이 관리 — 타입별로 "열린 순서" 리스트를 들고 있고, 열고 닫을 때마다 그 리스트 순서대로
+        // sortingOrder를 다시 매긴다. 카운터만 증감하면 중간 창이 닫힐 때 깊이가 겹친다.
         private Dictionary<WindowType, DepthInfo> _depthInfos = new Dictionary<WindowType, DepthInfo>();
-        private List<IBaseWindow> _openedNormalWindows = new List<IBaseWindow>();
-        private List<IBaseWindow> _openedPopupWindows = new List<IBaseWindow>();
+        private readonly Dictionary<WindowType, List<BaseWindow>> _openedByType = new Dictionary<WindowType, List<BaseWindow>>();
 
         private readonly List<IWindowUpdate> _updateWindows = new List<IWindowUpdate>();
 
@@ -165,8 +165,7 @@ namespace Game_UIFramework
             _windows.Clear();
             
             // 열린 윈도우 리스트 정리
-            _openedNormalWindows.Clear();
-            _openedPopupWindows.Clear();
+            _openedByType.Clear();
             _updateWindows.Clear();
             
             // 깊이 정보 초기화
@@ -227,16 +226,12 @@ namespace Game_UIFramework
                 return;
 
             var windowType = window.GetWindowType();
-            var depthInfo = GetDepthInfo(windowType);
-            
-            if (depthInfo != null)
-            {
-                var depth = depthInfo.GetNextDepth();
-                window.SetDepth(depth);
-            }
-
             var windowList = GetWindowList(windowType);
-            windowList.Add(window);
+            if (!windowList.Contains(window))
+            {
+                windowList.Add(window);
+            }
+            ReassignDepths(windowType);
 
             if (window is IWindowUpdate updatable && !_updateWindows.Contains(updatable))
             {
@@ -253,19 +248,30 @@ namespace Game_UIFramework
                 return;
 
             var windowType = window.GetWindowType();
-            var depthInfo = GetDepthInfo(windowType);
-            
-            if (depthInfo != null)
-            {
-                depthInfo.DecreaseWindow();
-            }
-
             var windowList = GetWindowList(windowType);
             windowList.Remove(window);
+            ReassignDepths(windowType);
 
             if (window is IWindowUpdate updatable)
             {
                 _updateWindows.Remove(updatable);
+            }
+        }
+
+        /// <summary>
+        /// 해당 타입에서 열려 있는 창들에 MinDepth부터 간격만큼 깊이를 다시 매긴다.
+        /// 중간 창이 닫혀도 남은 창들의 깊이가 겹치지 않고 촘촘하게 유지된다.
+        /// </summary>
+        private void ReassignDepths(WindowType windowType)
+        {
+            var depthInfo = GetDepthInfo(windowType);
+            if (depthInfo == null)
+                return;
+
+            var windowList = GetWindowList(windowType);
+            for (int i = 0; i < windowList.Count; i++)
+            {
+                windowList[i]?.SetDepth(depthInfo.MinDepth + i * depthInfo.DepthInterval);
             }
         }
         
@@ -282,18 +288,16 @@ namespace Game_UIFramework
         }
         
         /// <summary>
-        /// 윈도우 타입별 리스트 가져오기
+        /// 윈도우 타입별 "열린 순서" 리스트 가져오기 (없으면 만든다)
         /// </summary>
-        private List<IBaseWindow> GetWindowList(WindowType windowType)
+        private List<BaseWindow> GetWindowList(WindowType windowType)
         {
-            switch (windowType)
+            if (_openedByType.TryGetValue(windowType, out var list) == false)
             {
-                case WindowType.Popup:
-                case WindowType.Modal:
-                    return _openedPopupWindows;
-                default:
-                    return _openedNormalWindows;
+                list = new List<BaseWindow>();
+                _openedByType[windowType] = list;
             }
+            return list;
         }
         
         /// <summary>
@@ -310,29 +314,21 @@ namespace Game_UIFramework
         /// </summary>
         public bool IsAnyWindowOpen()
         {
-            return _openedNormalWindows.Count > 0 || _openedPopupWindows.Count > 0;
+            foreach (var pair in _openedByType)
+            {
+                if (pair.Value.Count > 0)
+                    return true;
+            }
+            return false;
         }
-        
+
         /// <summary>
-        /// 깊이 정보 클래스
+        /// 깊이 정보 클래스 (타입별 시작 깊이와 창 사이 간격)
         /// </summary>
         private class DepthInfo
         {
             public int MinDepth { get; set; }
             public int DepthInterval { get; set; }
-            private int _windowCount = 0;
-
-            public int GetNextDepth()
-            {
-                _windowCount++;
-                return MinDepth + (_windowCount - 1) * DepthInterval;
-            }
-
-            public void DecreaseWindow()
-            {
-                if (_windowCount > 0)
-                    _windowCount--;
-            }
         }
 
         private void InitializeUIRoot()
