@@ -1,0 +1,20 @@
+{
+  "name": "hugh-excel-to-json-exporter",
+  "version": "1.0.0",
+  "description": "Excel(xlsx) -> JSON exporter extracted from dfw-resource-main for side projects",
+  "main": "smart_exporter.js",
+  "scripts": {
+    "export": "node smart_exporter.js all",
+    "export:modified": "node smart_exporter.js modified",
+    "export:verbose": "node smart_exporter.js all --verbose",
+    "help": "node smart_exporter.js help"
+  },
+  "dependencies": {
+    "xlsx": "^0.18.5"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
+

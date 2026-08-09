@@ -1,0 +1,30 @@
+{
+  "LoadFileDataFileName": "LoadDataFile.xlsx",
+  "ContentsGroupKeyPassTableList": [
+    "ContentsGroupData"
+  ],
+  "ServerOnlyFileList": [
+    "ServerData"
+  ],
+  "DebugLog": false,
+  "ExportAll": false,
+  "ExceptCheckEmptySheet": [
+    "LocalizationData_Korean",
+    "DialogueData_Script",
+    "TutorialData_Script",
+    "BaseData_Description"
+  ],
+  "GenerateMetaFiles": false,
+  "ExcludeColumnPrefix": "_",
+  "ExcludeSheetPrefix": "_",
+  "ExcludeColumnPatterns": [
+    "_*"
+  ],
+  "ExcludeSheetPatterns": [
+    "_*"
+  ],
+  "EnumFilePatterns": [
+    "_Enum"
+  ]
+}
+
