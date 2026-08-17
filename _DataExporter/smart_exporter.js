@@ -1,7 +1,49 @@
 const fs = require('fs');
 const path = require('path');
 const XLSX = require('xlsx');
+const { execFileSync } = require('child_process');
 const { generateDataClass, generateContainersFile, generateGameRootFile, generateGameEnumFile, normalizeEnumName, setKnownEnums } = require('./class_generator');
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 이 부분에 Json 변환할 파일 확장자명 넣으세요.
+//
+// 넣을 수 있는 확장자 (아래 SOURCE_LOADERS에 로더가 있는 것만):
+//
+//   '.xlsx'   엑셀      시트 1장 = 표 1개
+//   '.js'     Node      module.exports = { 표이름: [[컬럼명..], [자료형..], [값..]] }
+//   '.py'     Python    TABLES      = { "표이름": [[컬럼명..], [자료형..], [값..]] }
+//                       ※ 로컬에 python 필요. 없으면 .py만 건너뛰고 나머지는 그대로 변환된다
+//
+// 규칙:
+//   - 여기서 뺀 확장자는 GameData/ 폴더에 파일이 있어도 아예 읽지 않는다.
+//   - 목록에 없는 확장자(예: '.csv')를 적으면 시작할 때 경고가 뜨고 그 확장자는 무시된다.
+//     새 포맷을 지원하려면 SOURCE_LOADERS에 한 줄 추가하고 로더 메서드를 만들어야 한다.
+//   - 확장자와 무관하게 표 규칙은 같다: 1행 컬럼명 → 2행 자료형 → 3행부터 값.
+// ─────────────────────────────────────────────────────────────────────────────
+const SOURCE_EXTENSIONS = ['.xlsx', '.js', '.py'];
+// ─────────────────────────────────────────────────────────────────────────────
+
+// 확장자 → 로더 메서드. 지원 가능한 확장자의 단일 기준이다.
+// 새 포맷을 붙일 때는 여기에 한 줄 추가하고, 그 메서드가
+// { sheets: [{ name, rows }] } 형태만 돌려주면 나머지 파이프라인은 그대로 동작한다.
+const SOURCE_LOADERS = {
+    '.xlsx': 'loadXlsxWorkbook',
+    '.js': 'loadJsWorkbook',
+    '.py': 'loadPyWorkbook'
+};
+
+// .py 파일에서 표를 꺼내 JSON으로 넘겨받는 러너.
+// 대상 파일을 모듈로 로드해 TABLES(또는 tables) 딕셔너리를 stdout에 직렬화한다.
+const PYTHON_RUNNER = [
+    'import importlib.util, json, pathlib, sys',
+    'p = pathlib.Path(sys.argv[1])',
+    'spec = importlib.util.spec_from_file_location(p.stem, str(p))',
+    'm = importlib.util.module_from_spec(spec)',
+    'spec.loader.exec_module(m)',
+    'data = getattr(m, "TABLES", None) or getattr(m, "tables", None)',
+    'if data is None: raise SystemExit("TABLES 딕셔너리를 찾을 수 없습니다")',
+    'sys.stdout.write(json.dumps(data, ensure_ascii=False, default=str))'
+].join('\n');
 
 class SmartExcelExporter {
     constructor(options = {}) {
@@ -60,6 +102,7 @@ class SmartExcelExporter {
         ];
 
         this.loadConfig();
+        this.resolveActiveExtensions();
         this.initializeExcludePatterns();
         this.loadEnumDefinitions();
     }
@@ -74,23 +117,20 @@ class SmartExcelExporter {
         }
 
         const enumFiles = fs.readdirSync(this.gamedataPath)
-            .filter(file => file.endsWith('.xlsx'))
+            .filter(file => this.isSourceFile(file))
             .filter(file => !this.isExcluded(file))
             .filter(file => this.isEnumFile(file));
 
         for (const filename of enumFiles) {
             try {
-                const workbook = XLSX.readFile(path.join(this.gamedataPath, filename), {
-                    cellStyles: false,
-                    cellFormulas: false,
-                    sheetStubs: false
-                });
+                const workbook = this.loadWorkbook(path.join(this.gamedataPath, filename));
 
-                for (const sheetName of workbook.SheetNames) {
+                for (const sheet of workbook.sheets) {
+                    const sheetName = sheet.name;
                     if (sheetName.includes('~')) {
                         continue;
                     }
-                    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: null });
+                    const rows = sheet.rows;
                     if (rows.length < 2) {
                         continue;
                     }
@@ -184,7 +224,7 @@ class SmartExcelExporter {
 
         // 여러 엑셀을 한 표로 합칠 때 쓰는 목록 파일 이름
         this.loadDataFileName = this.config.LoadFileDataFileName || 'LoadDataFile.xlsx';
-        this.loadDataBaseName = path.basename(this.loadDataFileName, '.xlsx');
+        this.loadDataBaseName = this.baseNameOf(this.loadDataFileName);
 
         // enum 정의 파일 패턴 — '_' 접두사 제외 규칙의 예외.
         // 파일명에 패턴이 포함되면 enum 정의 파일로 취급한다 (JSON만 생성, CS 미생성).
@@ -263,7 +303,7 @@ class SmartExcelExporter {
      * enum 정의 파일 여부 확인 ('_' 접두사 제외 규칙의 예외)
      */
     isEnumFile(filename) {
-        const baseName = path.basename(filename, '.xlsx');
+        const baseName = this.baseNameOf(filename);
         return this.enumFilePatterns.some(pattern =>
             baseName.toLowerCase().includes(pattern.toLowerCase()));
     }
@@ -293,18 +333,198 @@ class SmartExcelExporter {
         return this.excludePatterns.some(pattern => pattern.test(filename));
     }
 
+    // ── 소스 파일 로딩 ────────────────────────────────────────────────────────
+    // .xlsx / .js / .py 를 모두 { sheets: [{ name, rows }] } 한 가지 형태로 읽는다.
+    // rows는 2차원 배열이고 0행=컬럼명, 1행=자료형, 2행부터 데이터다.
+    // 아래 파이프라인은 이 형태만 알면 되므로 확장자가 늘어도 로더만 추가하면 된다.
+
+    /** 변환 대상 확장자인지 (SOURCE_EXTENSIONS ∩ 로더 있는 것) */
+    isSourceFile(filename) {
+        return this.activeExtensions.includes(path.extname(filename).toLowerCase());
+    }
+
     /**
-     * 엑셀 파일 목록 가져오기 (LoadDataFile에 정의된 파일들 제외)
+     * SOURCE_EXTENSIONS를 검증해 실제로 읽을 확장자 목록을 확정한다.
+     * 로더가 없는 확장자(오타 / 미구현)는 경고하고 제외한다 — 조용히 무시되면 원인을 못 찾는다.
      */
-    getExcelFiles() {
+    resolveActiveExtensions() {
+        const normalized = SOURCE_EXTENSIONS.map(ext => String(ext).trim().toLowerCase());
+        const unsupported = normalized.filter(ext => !SOURCE_LOADERS[ext]);
+
+        if (unsupported.length > 0) {
+            this.log(
+                `SOURCE_EXTENSIONS에 로더가 없는 확장자가 있어 무시합니다: ${unsupported.join(', ')} ` +
+                `(사용 가능: ${Object.keys(SOURCE_LOADERS).join(', ')})`, 'warning');
+        }
+
+        this.activeExtensions = normalized.filter(ext => !!SOURCE_LOADERS[ext]);
+
+        if (this.activeExtensions.length === 0) {
+            this.log('SOURCE_EXTENSIONS가 비어 있어 변환할 파일이 없습니다.', 'warning');
+        }
+    }
+
+    /** 확장자를 뗀 이름 = 표/클래스/JSON 파일 이름의 기준 */
+    baseNameOf(filename) {
+        return path.basename(filename, path.extname(filename));
+    }
+
+    /** baseName으로 실제 소스 파일을 찾는다 (확장자를 모르는 경우) */
+    findSourceFile(baseName) {
+        for (const ext of this.activeExtensions) {
+            const candidate = path.join(this.gamedataPath, baseName + ext);
+            if (fs.existsSync(candidate)) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    loadWorkbook(filePath) {
+        const ext = path.extname(filePath).toLowerCase();
+        const loader = SOURCE_LOADERS[ext];
+
+        if (!loader || typeof this[loader] !== 'function') {
+            throw new Error(
+                `로더가 없는 확장자입니다: ${ext} ` +
+                `(사용 가능: ${Object.keys(SOURCE_LOADERS).join(' / ')})`);
+        }
+
+        return this[loader](filePath);
+    }
+
+    loadXlsxWorkbook(filePath) {
+        const workbook = XLSX.readFile(filePath, {
+            cellStyles: false,
+            cellFormulas: false,
+            cellDates: true,
+            cellNF: false,
+            sheetStubs: false
+        });
+
+        const sheets = [];
+        for (const sheetName of workbook.SheetNames) {
+            const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
+                header: 1,
+                raw: false,
+                defval: ''
+            });
+            sheets.push({ name: sheetName, rows: rows });
+        }
+        return { sheets: sheets };
+    }
+
+    loadJsWorkbook(filePath) {
+        const abs = path.resolve(filePath);
+        // 같은 프로세스에서 두 번 읽을 수 있으므로 캐시를 비운다
+        delete require.cache[abs];
+
+        const loaded = require(abs);
+        const tables = (loaded && loaded.default) ? loaded.default : loaded;
+        return this.normalizeTableMap(tables, filePath);
+    }
+
+    loadPyWorkbook(filePath) {
+        const python = this.resolvePythonCommand();
+        if (!python) {
+            throw new Error('Python 실행 파일을 찾지 못했습니다 (python / python3 / py)');
+        }
+
+        const stdout = execFileSync(python, ['-c', PYTHON_RUNNER, path.resolve(filePath)], {
+            encoding: 'utf8',
+            maxBuffer: 64 * 1024 * 1024,
+            // 한글 표가 Windows 기본 코드페이지에서 깨지지 않게 강제한다
+            env: Object.assign({}, process.env, { PYTHONIOENCODING: 'utf-8' })
+        });
+
+        return this.normalizeTableMap(JSON.parse(stdout), filePath);
+    }
+
+    /** python 실행 명령을 한 번만 찾아 캐시한다. 없으면 null */
+    resolvePythonCommand() {
+        if (this._pythonCommand !== undefined) {
+            return this._pythonCommand;
+        }
+
+        const candidates = process.env.PYTHON ? [process.env.PYTHON] : ['python', 'python3', 'py'];
+        for (const candidate of candidates) {
+            try {
+                execFileSync(candidate, ['--version'], { stdio: 'ignore' });
+                this._pythonCommand = candidate;
+                return candidate;
+            } catch (e) {
+                // 다음 후보로
+            }
+        }
+
+        this._pythonCommand = null;
+        return null;
+    }
+
+    /**
+     * { 표이름: 값 } 객체를 워크북 형태로 정규화한다.
+     * - 값이 배열이면 그대로 행 배열로 본다 (일반 표)
+     * - 값이 객체면 { enum명: [멤버...] } 로 보고 열 방향으로 눕힌다 (_Enum 규약)
+     */
+    normalizeTableMap(tables, filePath) {
+        if (!tables || typeof tables !== 'object' || Array.isArray(tables)) {
+            throw new Error(`{ 표이름: 행배열 } 형태를 내보내야 합니다: ${path.basename(filePath)}`);
+        }
+
+        const sheets = [];
+        for (const [tableName, value] of Object.entries(tables)) {
+            if (typeof value === 'function') {
+                continue;
+            }
+            sheets.push({ name: tableName, rows: this.tableToRows(value, tableName, filePath) });
+        }
+        return { sheets: sheets };
+    }
+
+    tableToRows(value, tableName, filePath) {
+        if (Array.isArray(value)) {
+            return value.map(row => (Array.isArray(row) ? row : [row]));
+        }
+
+        if (value && typeof value === 'object') {
+            // _Enum 규약: { StatType: ['Attack', ...] } → 헤더=enum명, 아래=멤버인 표로 변환
+            const names = Object.keys(value);
+            const columns = names.map(name => (Array.isArray(value[name]) ? value[name] : []));
+            const height = columns.reduce((max, col) => Math.max(max, col.length), 0);
+
+            const rows = [names];
+            for (let i = 0; i < height; i++) {
+                rows.push(columns.map(col => (i < col.length ? col[i] : null)));
+            }
+            return rows;
+        }
+
+        throw new Error(`표 '${tableName}'의 값이 배열이 아닙니다: ${path.basename(filePath)}`);
+    }
+
+    /**
+     * 변환 대상 파일 목록 (LoadDataFile에 정의된 파일들 제외)
+     */
+    getSourceFiles() {
         if (!fs.existsSync(this.gamedataPath)) {
             this.log(`입력 폴더가 없습니다: ${this.gamedataPath}`, 'error');
             return [];
         }
 
         const files = fs.readdirSync(this.gamedataPath);
-        const allExcelFiles = files
-            .filter(file => file.endsWith('.xlsx'))
+        const allSourceFiles = files
+            .filter(file => this.isSourceFile(file))
+            .filter(file => {
+                // Python이 없는 환경이면 .py만 조용히 건너뛴다 (나머지 파이프라인은 그대로 돈다)
+                if (path.extname(file).toLowerCase() !== '.py' || this.resolvePythonCommand()) {
+                    return true;
+                }
+                if (!this._pythonWarned) {
+                    this._pythonWarned = true;
+                    this.log('Python을 찾지 못해 .py 파일을 건너뜁니다. python을 설치하거나 PYTHON 환경변수를 지정하세요.', 'warning');
+                }
+                return false;
+            })
             .filter(file => !this.isExcluded(file))
             .filter(file => {
                 // enum 정의 파일(_Enum 등)은 '_' 접두사 제외 규칙의 예외
@@ -322,8 +542,8 @@ class SmartExcelExporter {
         // LoadDataFile에 정의된 파일들을 제외하기 위해 먼저 LoadDataFile 정보 확인
         const loadDataFiles = this.getLoadDataFileList();
 
-        return allExcelFiles.filter(file => {
-            const baseName = path.basename(file, '.xlsx');
+        return allSourceFiles.filter(file => {
+            const baseName = this.baseNameOf(file);
             // 목록 파일 자체는 exportAll이 먼저 따로 처리한다. 여기서 빼지 않으면 두 번 처리된다.
             if (baseName === this.loadDataBaseName) {
                 return false;
@@ -337,31 +557,26 @@ class SmartExcelExporter {
      * LoadDataFile에 정의된 파일 목록 가져오기
      */
     getLoadDataFileList() {
-        const loadDataFilePath = path.join(this.gamedataPath, this.loadDataFileName);
+        // 목록 파일도 .xlsx / .js / .py 아무거나 될 수 있다
+        const loadDataFilePath = this.findSourceFile(this.loadDataBaseName);
 
-        if (!fs.existsSync(loadDataFilePath)) {
+        if (!loadDataFilePath) {
             return [];
         }
 
         try {
-            const workbook = XLSX.readFile(loadDataFilePath, {
-                cellStyles: false,
-                cellFormulas: false,
-                cellDates: true,
-                cellNF: false,
-                sheetStubs: false
-            });
+            const workbook = this.loadWorkbook(loadDataFilePath);
 
             const loadDataFiles = new Set();
 
-            for (const sheetName of workbook.SheetNames) {
+            for (const sheet of workbook.sheets) {
+                const sheetName = sheet.name;
                 // 제외 패턴 시트는 건너뛰기
                 if (this.isSheetExcluded(sheetName)) {
                     continue;
                 }
 
-                const worksheet = workbook.Sheets[sheetName];
-                const data = this.processWorksheet(worksheet, sheetName);
+                const data = this.processSheetRows(sheet.rows, sheetName);
 
                 for (const row of data) {
                     const loadDataFileName = row.LoadDataFileName;
@@ -392,7 +607,7 @@ class SmartExcelExporter {
             return Array.from(loadDataFiles);
 
         } catch (error) {
-            this.log(`LoadDataFile.xlsx 파일 목록 추출 실패: ${error.message}`, 'warning');
+            this.log(`${this.loadDataFileName} 파일 목록 추출 실패: ${error.message}`, 'warning');
             return [];
         }
     }
@@ -566,23 +781,22 @@ class SmartExcelExporter {
     }
 
     /**
-     * 워크시트에서 데이터 추출 및 변환
+     * 표 하나(행 배열)에서 데이터 추출 및 변환
+     * rows: 0행=컬럼명, 1행=자료형, 2행부터 데이터. 출처가 xlsx/js/py 무엇이든 여기로 모인다.
      */
-    processWorksheet(worksheet, sheetName) {
-        const jsonData = XLSX.utils.sheet_to_json(worksheet, {
-            header: 1,
-            raw: false,
-            defval: ''
-        });
+    processSheetRows(rows, sheetName) {
+        const jsonData = rows || [];
 
         if (jsonData.length < 3) {
-            this.log(`시트에 충분한 데이터가 없습니다: ${sheetName}`, 'warning');
+            this.log(`표에 충분한 데이터가 없습니다: ${sheetName}`, 'warning');
             return [];
         }
 
-        const headerRow = jsonData[0];    // 첫 번째 행: 컬럼명
-        const typeRow = jsonData[1];      // 두 번째 행: 자료형
-        let dataRows = jsonData.slice(2); // 세 번째 행부터: 실제 데이터
+        // js/py에서는 셀에 숫자가 그대로 올 수 있다. 컬럼명·자료형 행은 문자열로 맞춰둔다.
+        const toText = cell => (cell === null || cell === undefined ? '' : String(cell).trim());
+        const headerRow = (jsonData[0] || []).map(toText);  // 첫 번째 행: 컬럼명
+        const typeRow = (jsonData[1] || []).map(toText);    // 두 번째 행: 자료형
+        let dataRows = jsonData.slice(2);                   // 세 번째 행부터: 실제 데이터
 
         // 자료형이 정의된 컬럼만 유효한 데이터 컬럼으로 처리
         const validColumnCount = this.getValidColumnCount(typeRow);
@@ -700,25 +914,18 @@ class SmartExcelExporter {
     }
 
     /**
-     * 단일 엑셀 파일 처리
+     * 단일 소스 파일(.xlsx / .js / .py) 처리
      */
-    processExcelFile(filename) {
+    processSourceFile(filename) {
         const filePath = path.join(this.gamedataPath, filename);
-        const baseName = path.basename(filename, '.xlsx');
+        const baseName = this.baseNameOf(filename);
 
         this.log(`처리 시작: ${filename}`, 'info');
 
         try {
-            // 엑셀 파일 읽기
-            const workbook = XLSX.readFile(filePath, {
-                cellStyles: false,
-                cellFormulas: false,
-                cellDates: true,
-                cellNF: false,
-                sheetStubs: false
-            });
+            const workbook = this.loadWorkbook(filePath);
 
-            // LoadDataFile.xlsx 특별 처리
+            // 목록 파일 특별 처리
             if (baseName === this.loadDataBaseName) {
                 return this.processLoadDataFile(workbook, filename);
             }
@@ -728,12 +935,13 @@ class SmartExcelExporter {
                 return this.processEnumFile(workbook, filename, baseName);
             }
 
-            // 일반 엑셀 파일 처리
+            // 일반 파일 처리
             const results = {};
             let excludedSheetCount = 0;
 
-            // 모든 시트 처리
-            for (const sheetName of workbook.SheetNames) {
+            // 모든 표 처리
+            for (const sheet of workbook.sheets) {
+                const sheetName = sheet.name;
                 // 설정에서 제외된 시트는 건너뛰기
                 if (this.config.ExceptCheckEmptySheet &&
                     this.config.ExceptCheckEmptySheet.includes(sheetName)) {
@@ -748,8 +956,7 @@ class SmartExcelExporter {
                     continue;
                 }
 
-                const worksheet = workbook.Sheets[sheetName];
-                const data = this.processWorksheet(worksheet, sheetName);
+                const data = this.processSheetRows(sheet.rows, sheetName);
 
                 if (data.length > 0) {
                     results[sheetName] = data;
@@ -812,25 +1019,25 @@ class SmartExcelExporter {
 
                 // FileType과 같은 이름의 파일도 추가 (만약 존재한다면)
                 if (!allFilesToProcess.includes(fileType)) {
-                    const fileTypePath = path.join(this.gamedataPath, `${fileType}.xlsx`);
-                    if (fs.existsSync(fileTypePath)) {
+                    if (this.findSourceFile(fileType)) {
                         allFilesToProcess.unshift(fileType); // 맨 앞에 추가 (메인 파일)
-                        this.log(`FileType 메인 파일 추가: ${fileType}.xlsx`, 'debug');
+                        this.log(`FileType 메인 파일 추가: ${fileType}`, 'debug');
                     }
                 }
 
                 for (const fileName of allFilesToProcess) {
-                    const filePath = path.join(this.gamedataPath, `${fileName}.xlsx`);
+                    // 목록에는 확장자 없이 이름만 적으므로 지원 확장자를 순서대로 찾는다
+                    const filePath = this.findSourceFile(fileName);
 
-                    if (!fs.existsSync(filePath)) {
-                        this.log(`파일을 찾을 수 없습니다: ${fileName}.xlsx`, 'warning');
+                    if (!filePath) {
+                        this.log(`파일을 찾을 수 없습니다: ${fileName} (${this.activeExtensions.join(' / ')})`, 'warning');
                         continue;
                     }
 
-                    this.log(`처리 중: ${fileName}.xlsx (경로: ${filePath})`, 'info');
+                    this.log(`처리 중: ${path.basename(filePath)} (경로: ${filePath})`, 'info');
 
                     try {
-                        const combineResult = this.processExcelFileForCombine(filePath, fileName);
+                        const combineResult = this.processSourceFileForCombine(filePath, fileName);
                         const fileData = combineResult.data;
 
                         if (combinedSchema === null && combineResult.schema) {
@@ -904,12 +1111,13 @@ class SmartExcelExporter {
     }
 
     /**
-     * LoadDataFile.xlsx에서 파일 정보 추출
+     * 목록 파일에서 FileType별 파일 정보 추출
      */
     extractLoadDataInfo(workbook) {
         const loadDataInfo = {};
 
-        for (const sheetName of workbook.SheetNames) {
+        for (const sheet of workbook.sheets) {
+            const sheetName = sheet.name;
             // 설정에서 제외된 시트는 건너뛰기
             if (this.config.ExceptCheckEmptySheet &&
                 this.config.ExceptCheckEmptySheet.includes(sheetName)) {
@@ -923,8 +1131,7 @@ class SmartExcelExporter {
                 continue;
             }
 
-            const worksheet = workbook.Sheets[sheetName];
-            const data = this.processWorksheet(worksheet, sheetName);
+            const data = this.processSheetRows(sheet.rows, sheetName);
 
             for (const row of data) {
                 const fileType = row.FileType;
@@ -975,32 +1182,26 @@ class SmartExcelExporter {
     }
 
     /**
-     * 합치기를 위한 엑셀 파일 처리 (모든 시트 처리 후 병합)
+     * 합치기를 위한 소스 파일 처리 (모든 표 처리 후 병합)
      */
-    processExcelFileForCombine(filePath, fileName) {
+    processSourceFileForCombine(filePath, fileName) {
         try {
-            const workbook = XLSX.readFile(filePath, {
-                cellStyles: false,
-                cellFormulas: false,
-                cellDates: true,
-                cellNF: false,
-                sheetStubs: false
-            });
+            const workbook = this.loadWorkbook(filePath);
 
             let combinedData = [];
             let expectedColumns = null;
             let firstSchema = null;
 
-            // 모든 시트를 처리하고 병합
-            for (const sheetName of workbook.SheetNames) {
+            // 모든 표를 처리하고 병합
+            for (const sheet of workbook.sheets) {
+                const sheetName = sheet.name;
                 // 제외 패턴에 해당하는 시트는 건너뛰기
                 if (this.isSheetExcluded(sheetName)) {
                     this.log(`시트 제외됨 (패턴): ${sheetName}`, 'debug');
                     continue;
                 }
 
-                const worksheet = workbook.Sheets[sheetName];
-                const sheetData = this.processWorksheet(worksheet, sheetName);
+                const sheetData = this.processSheetRows(sheet.rows, sheetName);
 
                 if (sheetData.length === 0) {
                     this.log(`${fileName}의 ${sheetName} 시트에서 데이터를 찾을 수 없습니다.`, 'debug');
@@ -1069,13 +1270,14 @@ class SmartExcelExporter {
         const entries = [];
         const sheets = [];
 
-        for (const sheetName of workbook.SheetNames) {
+        for (const sheet of workbook.sheets) {
+            const sheetName = sheet.name;
             // 임시 시트만 제외 ('_' 접두사 시트 제외 규칙은 적용하지 않음)
             if (sheetName.includes('~')) {
                 continue;
             }
 
-            const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: null });
+            const rows = sheet.rows;
             if (rows.length < 2) {
                 continue;
             }
@@ -1192,7 +1394,7 @@ class SmartExcelExporter {
     }
 
     /**
-     * GameEnum.cs 갱신 (_Enum 엑셀 → Game.GameEnum 중첩 enum)
+     * GameEnum.cs 갱신 (_Enum 정의 → Game.GameEnum 중첩 enum)
      * export 마지막에 항상 호출한다. 내용이 같으면 파일을 건드리지 않는다.
      */
     generateGameEnum() {
@@ -1200,7 +1402,7 @@ class SmartExcelExporter {
             return;
         }
         if (this.enumMemberOrder.size === 0) {
-            // _Enum 엑셀이 없는 프로젝트다. 기존 파일이 있어도 지우지 않는다.
+            // _Enum 정의가 없는 프로젝트다. 기존 파일이 있어도 지우지 않는다.
             return;
         }
 
@@ -1270,10 +1472,10 @@ TextScriptImporter:
         let errorCount = 0;
 
         // 1. 먼저 LoadDataFile.xlsx 처리
-        const loadDataFilePath = path.join(this.gamedataPath, this.loadDataFileName);
-        if (fs.existsSync(loadDataFilePath)) {
-            this.log(`${this.loadDataFileName} 처리 시작`, 'info');
-            const result = this.processExcelFile(this.loadDataFileName);
+        const loadDataFilePath = this.findSourceFile(this.loadDataBaseName);
+        if (loadDataFilePath) {
+            this.log(`${path.basename(loadDataFilePath)} 처리 시작`, 'info');
+            const result = this.processSourceFile(path.basename(loadDataFilePath));
             results.push(result);
 
             if (result.success) successCount++;
@@ -1281,9 +1483,9 @@ TextScriptImporter:
         }
 
         // 2. 나머지 개별 파일들 처리 (LoadDataFile에 정의된 파일들 제외)
-        const excelFiles = this.getExcelFiles();
+        const excelFiles = this.getSourceFiles();
 
-        if (excelFiles.length === 0 && !fs.existsSync(loadDataFilePath)) {
+        if (excelFiles.length === 0 && !loadDataFilePath) {
             this.log('처리할 엑셀 파일이 없습니다.', 'warning');
             return { success: true, results: [] };
         }
@@ -1295,7 +1497,7 @@ TextScriptImporter:
             fileIndex++;
             console.log('');
             this.log(`[${fileIndex}/${excelFiles.length}] ${filename}`, 'info');
-            const result = this.processExcelFile(filename);
+            const result = this.processSourceFile(filename);
             results.push(result);
 
             if (result.success) {
@@ -1343,8 +1545,8 @@ TextScriptImporter:
         let fileIndex = 0;
 
         for (const filename of filenames) {
-            if (!filename.endsWith('.xlsx')) {
-                this.log(`엑셀 파일이 아닙니다: ${filename}`, 'warning');
+            if (!this.isSourceFile(filename)) {
+                this.log(`변환 대상 확장자가 아닙니다: ${filename} (${this.activeExtensions.join(' / ')})`, 'warning');
                 continue;
             }
 
@@ -1364,7 +1566,7 @@ TextScriptImporter:
                 continue;
             }
 
-            const result = this.processExcelFile(filename);
+            const result = this.processSourceFile(filename);
             results.push(result);
 
             if (result.success) {
@@ -1404,18 +1606,17 @@ TextScriptImporter:
         const modifiedFiles = [];
 
         // LoadDataFile.xlsx도 modified 대상에 포함 (존재하는 경우)
-        const loadDataFileName = this.loadDataFileName;
-        const loadDataFilePath = path.join(this.gamedataPath, loadDataFileName);
-        if (fs.existsSync(loadDataFilePath)) {
+        const loadDataFilePath = this.findSourceFile(this.loadDataBaseName);
+        if (loadDataFilePath) {
             const excelStat = fs.statSync(loadDataFilePath);
             const shouldProcess = this.shouldProcessLoadDataFile(excelStat.mtime, loadDataFilePath);
             if (shouldProcess) {
-                modifiedFiles.push(loadDataFileName);
+                modifiedFiles.push(path.basename(loadDataFilePath));
             }
         }
 
         // 개별 엑셀 파일들 (LoadDataFile에 정의된 파일들 제외)
-        const excelFiles = this.getExcelFiles();
+        const excelFiles = this.getSourceFiles();
 
         for (const filename of excelFiles) {
             const excelPath = path.join(this.gamedataPath, filename);
@@ -1443,22 +1644,17 @@ TextScriptImporter:
         try {
             // enum 정의 파일은 파일명 기준 JSON 하나로 출력되므로 그 파일과 비교
             if (this.isEnumFile(filename)) {
-                const enumJsonPath = path.join(this.jsonOutputPath, `${path.basename(filename, '.xlsx')}.json`);
+                const enumJsonPath = path.join(this.jsonOutputPath, `${this.baseNameOf(filename)}.json`);
                 if (!fs.existsSync(enumJsonPath)) {
                     return true;
                 }
                 return excelMtime > fs.statSync(enumJsonPath).mtime;
             }
 
-            const workbook = XLSX.readFile(excelPath, {
-                cellStyles: false,
-                cellFormulas: false,
-                cellDates: true,
-                cellNF: false,
-                sheetStubs: false
-            });
+            const workbook = this.loadWorkbook(excelPath);
 
-            const candidateSheets = workbook.SheetNames
+            const candidateSheets = workbook.sheets
+                .map(sheet => sheet.name)
                 .filter(sheetName => {
                     if (this.config.ExceptCheckEmptySheet && this.config.ExceptCheckEmptySheet.includes(sheetName)) {
                         return false;
@@ -1494,13 +1690,7 @@ TextScriptImporter:
 
     shouldProcessLoadDataFile(excelMtime, loadDataFilePath) {
         try {
-            const workbook = XLSX.readFile(loadDataFilePath, {
-                cellStyles: false,
-                cellFormulas: false,
-                cellDates: true,
-                cellNF: false,
-                sheetStubs: false
-            });
+            const workbook = this.loadWorkbook(loadDataFilePath);
 
             const loadDataInfo = this.extractLoadDataInfo(workbook);
             const fileTypes = Object.keys(loadDataInfo);
@@ -1568,16 +1758,19 @@ function main() {
 
         case 'help':
             console.log(`
-Hugh Excel to JSON Exporter
+Hugh Data Exporter (xlsx / js / py -> JSON + C#)
 
 사용법:
   node smart_exporter.js [command] [files...] [options]
 
 명령어:
-  all        - 모든 엑셀 파일 처리 (기본값)
+  all        - 모든 소스 파일 처리 (기본값)
   modified   - 수정된 파일만 처리
   file       - 특정 파일들만 처리
   help       - 도움말 표시
+
+지원 확장자: ${Object.keys(SOURCE_LOADERS).join(', ')}
+  (smart_exporter.js 상단 SOURCE_EXTENSIONS에서 켜고 끕니다)
 
 옵션:
   --verbose, -v  - 상세 로그 출력

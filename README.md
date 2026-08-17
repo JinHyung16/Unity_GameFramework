@@ -5,7 +5,7 @@
 | 모듈 | 역할 |
 |------|------|
 | **UIFramework** | 창(Window) 생명주기·깊이 관리, 프리팹 풀링, 재활용 스크롤 |
-| **DataLoader** + **_DataExporter** | 엑셀 → JSON → C# 코드 생성 → 런타임 로드 |
+| **DataLoader** + **_DataExporter** | 엑셀·JS·Python → JSON → C# 코드 생성 → 런타임 로드 |
 
 ## Requirements
 
@@ -16,6 +16,7 @@
 | `com.unity.addressables` | `DataManager`의 JSON 로드 |
 | `com.unity.textmeshpro` | `UIFramework/Examples`만 사용 — 예제 삭제 시 불필요 |
 | Node.js **14+** | `_DataExporter` 실행 (Unity 외부) |
+| Python **3.x** *(선택)* | `.py` 데이터 파일을 쓸 때만. 없으면 `.py`만 건너뛰고 나머지는 정상 변환된다 |
 
 ## Install
 
@@ -42,17 +43,17 @@
 │     │  ├─ Base/                     컨테이너 부모 — 수정 금지
 │     │  ├─ Containers/               표별 콘크리트 컨테이너 — 직접 작성
 │     │  ├─ Generated/                (생성) 데이터 클래스 + Containers.Generated.cs
-│     │  ├─ GameEnum.cs               (생성) _Enum 엑셀 기준 enum
+│     │  ├─ GameEnum.cs               (생성) _Enum 정의 기준 enum
 │     │  └─ Editor/                   Live Data Editor
 │     ├─ Game/Core/                   GameRoot (컨테이너 접근 루트)
 │     └─ Utility/                     Game_Utility 확장 메서드
 │
-└─ _DataExporter/                     엑셀 변환 도구
+└─ _DataExporter/                     데이터 변환 도구
    ├─ run_win.bat                     실행 진입점
-   ├─ smart_exporter.js               엑셀 파싱 → JSON
+   ├─ smart_exporter.js               소스 로딩 · 파싱 → JSON  (SOURCE_EXTENSIONS 여기)
    ├─ class_generator.js              C# 코드 생성
-   ├─ config.json                     시트/열 제외 규칙
-   └─ GameData/                       원본 .xlsx
+   ├─ config.json                     표/열 제외 규칙
+   └─ GameData/                       원본 .xlsx · .js · .py
 ```
 
 `(생성)` 표시된 경로는 도구가 덮어쓴다. 직접 수정하지 않는다.
@@ -62,7 +63,7 @@
 ## 데이터 파이프라인
 
 ```
-_DataExporter/GameData/*.xlsx
+_DataExporter/GameData/*.xlsx  *.js  *.py
         │  run_win.bat
         ▼
 Assets/GameData/*.json                            런타임 데이터
@@ -74,9 +75,44 @@ Assets/Scripts/Game/Core/GameRoot.Generated.cs    컨테이너 접근 프로퍼�
 
 코드 생성은 **`run_win.bat` 한 번으로 전부** 끝난다. Unity에서 눌러야 하는 메뉴는 없다.
 
-### 시트 규칙
+### 원본 파일 — 위치와 확장자
 
-**시트 1장 = 표 1개.** 시트 이름이 곧 클래스명이자 JSON 파일명이다.
+모든 원본은 **`_DataExporter/GameData/`** 에 넣는다. 하위 폴더는 스캔하지 않는다.
+
+| 확장자 | 용도 | 비고 |
+|--------|------|------|
+| `.xlsx` | 기획자 주력 | 시트 1장 = 표 1개 |
+| `.js` | 계산으로 생성하는 표 | 별도 설치 불필요 |
+| `.py` | 계산으로 생성하는 표 | 로컬 Python 필요 |
+
+읽을 확장자는 [smart_exporter.js](_DataExporter/smart_exporter.js) 최상단에서 켜고 끈다.
+
+```js
+// ─────────────────────────────────────────────────────────────────────────────
+// 이 부분에 Json 변환할 파일 확장자명 넣으세요.
+//
+// 넣을 수 있는 확장자 (아래 SOURCE_LOADERS에 로더가 있는 것만):
+//
+//   '.xlsx'   엑셀      시트 1장 = 표 1개
+//   '.js'     Node      module.exports = { 표이름: [[컬럼명..], [자료형..], [값..]] }
+//   '.py'     Python    TABLES      = { "표이름": [[컬럼명..], [자료형..], [값..]] }
+//                       ※ 로컬에 python 필요. 없으면 .py만 건너뛰고 나머지는 그대로 변환된다
+// ─────────────────────────────────────────────────────────────────────────────
+const SOURCE_EXTENSIONS = ['.xlsx', '.js', '.py'];
+```
+
+- 여기서 뺀 확장자는 `GameData/`에 파일이 있어도 **아예 읽지 않는다.** 예를 들어 `['.xlsx']`만 남기면 엑셀만 변환된다.
+- 이 배열은 **켜고 끄는 스위치**지 아무 확장자나 추가하는 곳이 아니다. 로더가 없는 확장자(예: `.csv`)를 적으면 시작할 때 경고하고 무시한다.
+
+```
+[WARN] SOURCE_EXTENSIONS에 로더가 없는 확장자가 있어 무시합니다: .csv (사용 가능: .xlsx, .js, .py)
+```
+
+- 새 포맷을 지원하려면 `SOURCE_LOADERS`에 한 줄 추가하고 로더 메서드를 만든다. → [확장자 추가하기](#코드-생성-진입점)
+
+### 표 규칙 — 확장자와 무관하게 동일
+
+**표 1개 = 컬럼명 → 자료형 → 값의 3단 구조.** 표 이름이 곧 클래스명이자 JSON 파일명이다.
 
 | 행 | 내용 | 예 |
 |----|------|-----|
@@ -86,14 +122,102 @@ Assets/Scripts/Game/Core/GameRoot.Generated.cs    컨테이너 접근 프로퍼�
 
 > ⚠️ **1행이 열 이름, 2행이 자료형이다.** 순서를 바꾸면 전부 `string`으로 떨어진다.
 
+**xlsx** — 시트명이 표 이름
+
+| | A | B | C |
+|---|---|---|---|
+| **1** | `Id` | `Code` | `Atk` |
+| **2** | `int!` | `string!` | `float` |
+| **3** | `1` | `knight` | `10.5` |
+
+**js** — `module.exports`의 키가 표 이름. 한 파일에 표 여러 개를 담을 수 있다(= 워크북의 시트 여러 장).
+
+```js
+module.exports = {
+  HeroData: [
+    ['Id',   'Code',    'Atk'  ],
+    ['int!', 'string!', 'float'],
+    [1,      'knight',  10.5   ],
+  ],
+};
+```
+
+**py** — `TABLES` 딕셔너리의 키가 표 이름
+
+```python
+TABLES = {
+    "HeroData": [
+        ["Id",   "Code",    "Atk"  ],
+        ["int!", "string!", "float"],
+        [1,      "knight",  10.5   ],
+    ],
+}
+```
+
+셋 다 결과가 완전히 동일하다. 자료형 표기·키 규칙·`!` 필수 검사·`_` 접두사 제외가 전부 같게 적용된다.
+
+코드 포맷의 쓸모는 **계산으로 표를 만들 수 있다**는 점이다. 밸런스 곡선을 상수로 관리하고 재실행하면 전체가 다시 생성된다.
+
+```js
+const rows = [
+  ['Id',   'Level', 'RequiredExp', 'Hp'  ],
+  ['int!', 'int!',  'int!',        'int!'],
+];
+for (let lv = 1; lv <= 100; lv++) {
+  rows.push([lv, lv, Math.floor(100 * Math.pow(1.15, lv - 1)), 50 + lv * 12]);
+}
+module.exports = { LevelData: rows };
+```
+
+> `.js`는 `require()`로, `.py`는 서브프로세스로 **실제 실행된다.** 외부에서 받은 파일을 그대로 `GameData/`에 넣지 않는다.
+
+### 표 작성 규칙
+
 | 규칙 | 내용 |
 |------|------|
 | 키 | `Id`(`int!`, 1부터 순번)가 키다. 없으면 `Key` 열, 그것도 없으면 맨 왼쪽 열. `Id`와 `Key`를 같이 두지 않는다 |
 | 논리 식별자 | 세이브·로직이 참조하는 문자열은 `Code`(`string!`). 타 표 참조 열은 `~Code`/`~Codes` (`~Id`는 금지 — int로 오해된다) |
 | 필수 | 자료형 뒤 `!` (`int!`). 빈 값이면 에러 |
-| 배열 | `intArray` · `floatArray` · `stringArray`, 셀은 쉼표 구분(`1,2,3`). 요소에 쉼표가 필요하면 배열 대신 1:N 시트로 정규화 |
-| enum | `_Enum` 엑셀에 열 1개 = enum 1개(헤더=이름, 아래=멤버). 자료형 칸에 enum 이름만 적는다. `E` 접두사 금지, `~Type` 접미사 |
-| 제외 | `_`로 시작하는 시트·열은 변환하지 않는다 (`_Enum` 파일은 예외) |
+| 배열 | `intArray` · `floatArray` · `stringArray`, 셀은 쉼표 구분(`1,2,3`). 요소에 쉼표가 필요하면 배열 대신 1:N 표로 정규화 |
+| enum | 아래 `_Enum` 참고. 자료형 칸에 enum 이름만 적는다. `E` 접두사 금지, `~Type` 접미사 |
+| 제외 | `_`로 시작하는 표·열은 변환하지 않는다 (`_Enum` 파일은 예외) |
+| 자료형 | `int` `long` `float` `double` `bool` `string` · `intArray` `floatArray` `stringArray` · enum 이름 |
+
+### `_Enum` — enum 정의만 규약이 다르다
+
+enum은 3단 구조가 아니라 **열 1개 = enum 1개**(헤더 = 이름, 아래 = 멤버)다. 값은 등장 순서대로 `0, 1, 2…`가 배정되므로 **중간에 멤버를 끼워 넣으면 기존 데이터가 밀린다.** 추가는 항상 끝에 한다.
+
+**xlsx** — `_Enum.xlsx`
+
+| | A | B |
+|---|---|---|
+| **1** | `StatType` | `CurrencyType` |
+| **2** | `Attack` | `Gold` |
+| **3** | `Defense` | `Gem` |
+
+**js / py** — 배열이 아니라 객체/딕셔너리로 쓴다. 도구가 위 표 형태로 변환한다.
+
+```js
+// _Enum.js
+module.exports = {
+  _Enum: {
+    StatType:     ['Attack', 'Defense', 'Speed'],
+    CurrencyType: ['Gold', 'Gem'],
+  },
+};
+```
+
+```python
+# _Enum.py
+TABLES = {
+    "_Enum": {
+        "StatType":     ["Attack", "Defense", "Speed"],
+        "CurrencyType": ["Gold", "Gem"],
+    },
+}
+```
+
+정의된 enum은 어떤 포맷의 표에서든 자료형 칸에 이름만 적어 쓸 수 있다(`.js`에서 정의하고 `.py` 표에서 참조해도 된다). `Game.GameEnum.StatType`으로 생성된다.
 
 ### 컨테이너 작성
 
@@ -107,7 +231,7 @@ public class StageThemeDataContainer : StageThemeDataDictionaryContainer { } // 
 public class DropDataContainer       : DropDataDictionaryGroupContainer { }  // 1:N
 ```
 
-콘크리트를 추가/삭제한 뒤 `run_win.bat`을 다시 돌리면(엑셀 변경 없어도 됨) `GameRoot.Generated.cs`가 갱신된다.
+콘크리트를 추가/삭제한 뒤 `run_win.bat`을 다시 돌리면(데이터 변경 없어도 됨) `GameRoot.Generated.cs`가 갱신된다.
 
 ```csharp
 await DataManager.Instance.InitializeAsync();                     // 시작 시 1회
@@ -214,16 +338,37 @@ ItemComponent.Auto.Release(comp);
 
 산출물을 고칠 일이 있으면 아래를 본다.
 
-| 산출물 | 파일 | 함수 |
-|--------|------|------|
+**C# 코드를 찍는 건 전부 `class_generator.js`다.** `smart_exporter.js`는 원본을 읽어 JSON을 만들고 거기에 생성기를 물린다.
+
+| 산출물 / 단계 | 파일 | 함수 |
+|--------------|------|------|
 | `<표>.cs` (데이터 클래스) | `class_generator.js` | `buildTableClass()` |
 | `Containers.Generated.cs` | `class_generator.js` | `buildContainerEntry()` / `generateContainersFile()` |
 | `GameEnum.cs` | `class_generator.js` | `generateGameEnumFile()` |
 | `GameRoot.Generated.cs` | `class_generator.js` | `generateGameRootFile()` |
-| 엑셀 자료형 → C# 타입 매핑 | `class_generator.js` | `csType()` |
-| 엑셀 셀 → JSON 값 변환 | `smart_exporter.js` | `convertValue()` |
-| 시트 파싱 · 스키마 수집 | `smart_exporter.js` | `processWorksheet()` |
+| 자료형 → C# 타입 매핑 | `class_generator.js` | `csType()` |
+| 셀 → JSON 값 변환 | `smart_exporter.js` | `convertValue()` |
+| 표 파싱 · 스키마 수집 | `smart_exporter.js` | `processSheetRows()` |
 | JSON 쓰기 + 코드 생성 호출 | `smart_exporter.js` | `createJsonFiles()` |
+
+**확장자를 추가하려면** 로더를 만들고 `SOURCE_LOADERS`에 한 줄, `SOURCE_EXTENSIONS`에 한 줄 넣으면 된다. 모든 로더는 `{ sheets: [{ name, rows }] }` 한 가지 형태를 반환하고, 그 아래 파이프라인은 원본이 무엇이었는지 알지 못한다.
+
+```js
+const SOURCE_LOADERS = {
+    '.xlsx': 'loadXlsxWorkbook',
+    '.js': 'loadJsWorkbook',
+    '.py': 'loadPyWorkbook'
+};
+```
+
+| 단계 | 파일 | 함수 |
+|------|------|------|
+| 확장자 검증 (로더 없는 것 걸러냄) | `smart_exporter.js` | `resolveActiveExtensions()` |
+| 확장자별 분기 | `smart_exporter.js` | `loadWorkbook()` |
+| xlsx 로더 | `smart_exporter.js` | `loadXlsxWorkbook()` |
+| js 로더 | `smart_exporter.js` | `loadJsWorkbook()` |
+| py 로더 (서브프로세스) | `smart_exporter.js` | `loadPyWorkbook()` / `PYTHON_RUNNER` |
+| 표 형태 정규화 (`_Enum` 객체 → 행렬 포함) | `smart_exporter.js` | `normalizeTableMap()` / `tableToRows()` |
 
 `GameEnum.cs`와 `GameRoot.Generated.cs`는 매 실행마다 갱신되며, 내용이 같으면 파일을 건드리지 않는다(Unity 재임포트 방지).
 
@@ -231,8 +376,8 @@ ItemComponent.Auto.Release(comp);
 
 ```bash
 node smart_exporter.js all        # 전체 (run_win.bat 기본값)
-node smart_exporter.js modified   # 변경된 엑셀만
-node smart_exporter.js file A.xlsx B.xlsx
+node smart_exporter.js modified   # 변경된 파일만 (mtime 비교)
+node smart_exporter.js file HeroData.xlsx LevelData.js ShopData.py
 ```
 
 `--verbose`로 상세 로그. 경로는 `GAMEDATA_PATH` · `JSON_OUTPUT_PATH` · `CS_OUTPUT_PATH` · `CONFIG_PATH` 환경변수로 덮어쓸 수 있다(`run_win.bat`이 설정한다).
