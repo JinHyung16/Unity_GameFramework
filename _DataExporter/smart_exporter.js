@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const XLSX = require('xlsx');
 const { execFileSync } = require('child_process');
-const { generateDataClass, generateContainersFile, generateGameRootFile, generateGameEnumFile, normalizeEnumName, setKnownEnums } = require('./class_generator');
+const { normalizeEnumName } = require('./enum_name');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 이 부분에 Json 변환할 파일 확장자명 넣으세요.
@@ -51,21 +51,12 @@ class SmartExcelExporter {
         this.gamedataPath = options.gamedataPath || path.join(process.cwd(), 'gamedata');
         this.jsonOutputPath = options.jsonOutputPath || path.join(process.cwd(), 'jsondata');
         this.configPath = options.configPath || path.join(process.cwd(), 'config.json');
-        this.csOutputPath = options.csOutputPath || null;
+        // 스키마 출력 경로 — Unity의 DB Generate가 이 파일을 읽어 C#을 만든다.
+        // 런타임에는 쓰이지 않으므로 Addressables 대상인 GameData/ 바깥에 둔다.
+        this.schemaOutputPath = options.schemaOutputPath || null;
         this.verbose = options.verbose || false;
 
-        // GameRoot 코드젠 경로 — 미지정 시 csOutputPath(DataLoader/Generated) 기준으로 유도
-        this.containersPath = options.containersPath
-            || (this.csOutputPath ? path.resolve(this.csOutputPath, '..', 'Containers') : null);
-        this.gameRootOutputPath = options.gameRootOutputPath
-            || (this.csOutputPath ? path.resolve(this.csOutputPath, '..', '..', 'Game', 'Core', 'GameRoot.Generated.cs') : null);
-
-        // GameEnum.cs — 데이터 클래스가 Game.GameEnum.XxxType을 참조하므로 같은 실행에서 같이 뽑아야
-        // 컴파일이 한 번에 통과한다. DataLoader/Generated 기준 한 단계 위(DataLoader/)에 놓는다.
-        this.gameEnumOutputPath = options.gameEnumOutputPath
-            || (this.csOutputPath ? path.resolve(this.csOutputPath, '..', 'GameEnum.cs') : null);
-
-        // 시트별 컬럼 스키마(이름/자료형) — C# 클래스 생성용
+        // 시트별 컬럼 스키마(이름/자료형) — _Schema.json 출력용
         this.schemas = {};
 
         // 자료형 매핑 (배열은 '<자료형>array' 형태만 허용, json 금지)
@@ -165,7 +156,7 @@ class SmartExcelExporter {
             }
         }
 
-        setKnownEnums([...this.enumDefs.keys()]);
+
         if (this.enumDefs.size > 0) {
             this.log(`enum 정의 로드 완료: ${this.enumDefs.size}개 (${[...this.enumDefs.keys()].join(', ')})`, 'debug');
         }
@@ -1325,7 +1316,7 @@ class SmartExcelExporter {
         const outputFileName = `${baseName}.json`;
         const outputPath = path.join(this.jsonOutputPath, outputFileName);
         fs.writeFileSync(outputPath, JSON.stringify(entries, null, 4), 'utf8');
-        this.log(`JSON 생성 완료: ${outputFileName} (enum 멤버 ${entries.length}개, CS 생성 안 함)`, 'success');
+        this.log(`JSON 생성 완료: ${outputFileName} (enum 멤버 ${entries.length}개)`, 'success');
 
         if (this.config.GenerateMetaFiles !== false) {
             fs.writeFileSync(outputPath + '.meta', this.generateMetaFile(), 'utf8');
@@ -1376,67 +1367,67 @@ class SmartExcelExporter {
                     fs.writeFileSync(metaPath, metaContent, 'utf8');
                 }
 
-                if (this.csOutputPath && this.schemas[key]) {
-                    if (generateDataClass(key, this.schemas[key], this.csOutputPath)) {
-                        processedSchemas[key] = this.schemas[key];
-                        this.log(`CS 생성 완료: ${key}.cs`, 'success');
-                    }
-                }
-
             } catch (error) {
                 this.log(`JSON 생성 실패 (${outputFileName}): ${error.message}`, 'error');
             }
         }
 
-        if (this.csOutputPath && generateContainersFile(this.csOutputPath, processedSchemas)) {
-            this.log(`CS 생성 완료: Containers.Generated.cs (${Object.keys(processedSchemas).length}개 테이블 갱신)`, 'success');
-        }
     }
 
     /**
-     * GameEnum.cs 갱신 (_Enum 정의 → Game.GameEnum 중첩 enum)
+     * _Schema.json 갱신 (표별 컬럼/자료형 + enum 정의)
+     * Unity의 DB Generate가 이 파일만 읽어 C#을 만든다. C#은 여기서 만들지 않는다.
      * export 마지막에 항상 호출한다. 내용이 같으면 파일을 건드리지 않는다.
      */
-    generateGameEnum() {
-        if (!this.gameEnumOutputPath) {
-            return;
-        }
-        if (this.enumMemberOrder.size === 0) {
-            // _Enum 정의가 없는 프로젝트다. 기존 파일이 있어도 지우지 않는다.
+    writeSchema() {
+        if (!this.schemaOutputPath) {
             return;
         }
 
-        const result = generateGameEnumFile(this.enumMemberOrder, this.gameEnumOutputPath);
-        if (!result) {
+        const tables = {};
+        for (const name of Object.keys(this.schemas).sort()) {
+            const columns = this.schemas[name];
+            if (!columns || columns.length === 0) {
+                continue;
+            }
+            tables[name] = columns.map(c => ({ name: String(c.name), type: String(c.type) }));
+        }
+
+        const enums = {};
+        for (const name of [...this.enumMemberOrder.keys()]) {
+            const seen = new Set();
+            const members = [];
+            for (const raw of this.enumMemberOrder.get(name)) {
+                const member = String(raw);
+                if (seen.has(member)) {
+                    continue;
+                }
+                seen.add(member);
+                members.push(member);
+            }
+            if (members.length > 0) {
+                enums[name] = members;
+            }
+        }
+
+        if (Object.keys(tables).length === 0 && Object.keys(enums).length === 0) {
             return;
         }
 
-        if (result.written) {
-            this.log(`CS 생성 완료: GameEnum.cs (enum ${result.count}개, 멤버 ${result.memberCount}개)`, 'success');
-        } else {
-            this.log(`GameEnum.cs 변경 없음 (enum ${result.count}개)`, 'debug');
-        }
-    }
+        const content = JSON.stringify({ tables: tables, enums: enums }, null, 4);
 
-    /**
-     * GameRoot.Generated.cs 갱신 (콘크리트 컨테이너 스캔 → GameRoot 프로퍼티)
-     * export 마지막에 항상 호출한다. 내용이 같으면 파일을 건드리지 않는다.
-     */
-    generateGameRoot() {
-        if (!this.containersPath || !this.gameRootOutputPath) {
+        const dir = path.dirname(this.schemaOutputPath);
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+
+        if (fs.existsSync(this.schemaOutputPath) && fs.readFileSync(this.schemaOutputPath, 'utf8') === content) {
+            this.log(`_Schema.json 변경 없음 (표 ${Object.keys(tables).length}개)`, 'debug');
             return;
         }
 
-        const result = generateGameRootFile(this.containersPath, this.gameRootOutputPath);
-        if (!result) {
-            return;
-        }
-
-        if (result.written) {
-            this.log(`CS 생성 완료: GameRoot.Generated.cs (컨테이너 ${result.count}개)`, 'success');
-        } else {
-            this.log(`GameRoot.Generated.cs 변경 없음 (컨테이너 ${result.count}개)`, 'debug');
-        }
+        fs.writeFileSync(this.schemaOutputPath, content, 'utf8');
+        this.log(`스키마 생성 완료: _Schema.json (표 ${Object.keys(tables).length}개, enum ${Object.keys(enums).length}개)`, 'success');
     }
 
     /**
@@ -1509,8 +1500,7 @@ TextScriptImporter:
             }
         }
 
-        this.generateGameEnum();
-        this.generateGameRoot();
+        this.writeSchema();
 
         // 결과 요약
         this.log('\n=== 처리 완료 ===', 'info');
@@ -1578,8 +1568,7 @@ TextScriptImporter:
             }
         }
 
-        this.generateGameEnum();
-        this.generateGameRoot();
+        this.writeSchema();
 
         console.log('');
         this.log('=== 처리 완료 ===', 'info');
@@ -1630,8 +1619,7 @@ TextScriptImporter:
 
         if (modifiedFiles.length === 0) {
             // 엑셀 변경이 없어도 콘크리트 컨테이너 추가/삭제는 반영해야 한다
-            this.generateGameEnum();
-        this.generateGameRoot();
+            this.writeSchema();
             this.log('수정된 파일이 없습니다.', 'success');
             return { success: true, results: [] };
         }
@@ -1726,7 +1714,7 @@ function main() {
         gamedataPath: process.env.GAMEDATA_PATH || path.join(process.cwd(), 'gamedata'),
         jsonOutputPath: process.env.JSON_OUTPUT_PATH || path.join(process.cwd(), 'jsondata'),
         configPath: process.env.CONFIG_PATH || path.join(process.cwd(), 'config.json'),
-        csOutputPath: process.env.CS_OUTPUT_PATH || null,
+        schemaOutputPath: process.env.SCHEMA_OUTPUT_PATH || null,
         verbose: args.includes('--verbose') || args.includes('-v')
     };
 
@@ -1758,7 +1746,7 @@ function main() {
 
         case 'help':
             console.log(`
-Hugh Data Exporter (xlsx / js / py -> JSON + C#)
+Hugh Data Exporter (xlsx / js / py -> JSON + _Schema.json)
 
 사용법:
   node smart_exporter.js [command] [files...] [options]
@@ -1779,10 +1767,14 @@ Hugh Data Exporter (xlsx / js / py -> JSON + C#)
   입력:  ./gamedata
   출력:  ./jsondata
 
+C# 은 여기서 만들지 않습니다.
+  Unity 에서 Tools > GameData > DB Generate (Ctrl+G) 를 실행하세요.
+
 환경변수:
-  GAMEDATA_PATH     - 입력 폴더 경로
-  JSON_OUTPUT_PATH  - 출력 폴더 경로
-  CONFIG_PATH       - 설정 파일 경로
+  GAMEDATA_PATH       - 입력 폴더 경로
+  JSON_OUTPUT_PATH    - JSON 출력 폴더 경로
+  SCHEMA_OUTPUT_PATH  - _Schema.json 출력 파일 경로
+  CONFIG_PATH         - 설정 파일 경로
             `);
             break;
 
