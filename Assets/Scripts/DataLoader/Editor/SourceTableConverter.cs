@@ -120,8 +120,9 @@ namespace Game_DataLoader
                     continue;
                 }
 
-                // 자료형 앞의 '#' 은 "이 열은 내보내지 않는다"는 표시다.
-                if (rawType.StartsWith("#"))
+                // '#' 은 "이 열은 내보내지 않는다"는 표시다.
+                // 자료형 칸(#int)에 붙이는 게 기본이고, 열 이름(#Memo)에 붙여도 같게 본다.
+                if (rawType.StartsWith("#") || name.StartsWith("#"))
                 {
                     spec.Excluded = true;
                     spec.ExcludeReason = "# 로 제외";

@@ -6,7 +6,7 @@ namespace Game_DataLoader
 {
     /// <summary>
     /// _DataExporter/config.json 의 "Paths" 를 편집한다.
-    /// Node 익스포터와 DB Generate 가 같은 파일을 읽으므로, 여기서 바꾸면 양쪽에 함께 반영된다.
+    /// Data Generate(Ctrl+G) 가 이 경로대로 읽고 쓴다.
     /// </summary>
     public class DataPipelineSettingsWindow : EditorWindow
     {
@@ -47,22 +47,24 @@ namespace Game_DataLoader
 
             EditorGUILayout.HelpBox(
                 "상대 경로는 프로젝트 루트(Assets 의 부모) 기준입니다.\n" +
-                "위 두 칸은 run_win.bat 이, 아래 네 칸은 DB Generate 가 사용합니다.", MessageType.Info);
+                "위 두 칸은 원본 읽기와 JSON 출력에, 아래 네 칸은 코드 생성에 쓰입니다.", MessageType.Info);
 
             _scroll = EditorGUILayout.BeginScrollView(_scroll);
 
             EditorGUILayout.Space(2);
-            EditorGUILayout.LabelField("원본 → JSON  (run_win.bat)", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("원본 → JSON", EditorStyles.boldLabel);
             _paths.SourceFolder = PathField("원본 폴더", _paths.SourceFolder, true, "원본 폴더 선택");
             _paths.JsonOutput = PathField("JSON 출력", _paths.JsonOutput, true, "JSON 출력 폴더 선택");
-            _paths.SchemaOutput = PathField("스키마 파일", _paths.SchemaOutput, false, null);
 
             EditorGUILayout.Space(8);
-            EditorGUILayout.LabelField("스키마 → C#  (DB Generate)", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("C# 코드 생성", EditorStyles.boldLabel);
             _paths.GeneratedFolder = PathField("생성 코드 폴더", _paths.GeneratedFolder, true, "생성 코드 폴더 선택");
             _paths.ContainersFolder = PathField("컨테이너 폴더", _paths.ContainersFolder, true, "컨테이너 폴더 선택");
             _paths.GameEnumFile = PathField("GameEnum.cs", _paths.GameEnumFile, false, null);
             _paths.GameRootFile = PathField("GameRoot.Generated.cs", _paths.GameRootFile, false, null);
+
+            EditorGUILayout.Space(10);
+            DrawLoaders();
 
             EditorGUILayout.EndScrollView();
 
@@ -148,23 +150,57 @@ namespace Game_DataLoader
             return value;
         }
 
+        /// <summary>
+        /// 읽을 수 있는 원본 포맷. Editor/Sources/ 에 IDataSourceLoader 구현을 추가하면 여기 나타난다.
+        /// 외부 런타임이 필요한 포맷은 없을 때 이유를 함께 보여준다.
+        /// </summary>
+        private void DrawLoaders()
+        {
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                EditorGUILayout.LabelField("읽을 수 있는 원본 포맷", EditorStyles.boldLabel);
+                if (GUILayout.Button("다시 확인", GUILayout.Width(80)))
+                {
+                    DataSourceRegistry.Invalidate();
+                    ExternalRuntime.Invalidate();
+                }
+            }
+
+            EditorGUILayout.LabelField(
+                "Assets/Scripts/DataLoader/Editor/Sources/ 에 로더를 추가하면 자동으로 잡힙니다.",
+                EditorStyles.miniLabel);
+
+            foreach (IDataSourceLoader loader in DataSourceRegistry.All)
+            {
+                bool available = loader.IsAvailable(out string reason);
+                using (new EditorGUILayout.HorizontalScope(EditorStyles.helpBox))
+                {
+                    Color previous = GUI.color;
+                    if (available == false)
+                    {
+                        GUI.color = new Color(1f, 1f, 1f, 0.55f);
+                    }
+
+                    EditorGUILayout.LabelField(loader.Extension, GUILayout.Width(52));
+                    EditorGUILayout.LabelField(loader.DisplayName, GUILayout.Width(170));
+                    EditorGUILayout.LabelField(available ? "사용 가능" : reason, EditorStyles.miniLabel);
+
+                    GUI.color = previous;
+                }
+            }
+
+            if (DataSourceRegistry.All.Count == 0)
+            {
+                EditorGUILayout.HelpBox("로더가 하나도 없습니다.", MessageType.Error);
+            }
+        }
+
         private void DrawWarnings()
         {
             string source = DataPipelineConfig.Resolve(_paths.SourceFolder);
             if (Directory.Exists(source) == false)
             {
                 EditorGUILayout.HelpBox($"원본 폴더가 없습니다: {_paths.SourceFolder}", MessageType.Warning);
-            }
-
-            // 스키마는 에디터 전용이다. JSON 폴더가 통째로 Addressables 엔트리가 되므로
-            // 그 안에 두면 런타임에 쓰지도 않는 파일이 빌드에 딸려간다.
-            string jsonFolder = Normalize(_paths.JsonOutput);
-            string schema = Normalize(_paths.SchemaOutput);
-            if (string.IsNullOrEmpty(jsonFolder) == false && schema.StartsWith(jsonFolder + "/"))
-            {
-                EditorGUILayout.HelpBox(
-                    "스키마가 JSON 출력 폴더 안에 있습니다. 에디터 전용 파일이 빌드에 포함될 수 있으니 폴더 밖으로 옮기세요.",
-                    MessageType.Warning);
             }
 
             if (DataPipelineConfig.IsInsideAssets(_paths.GeneratedFolder) == false)
