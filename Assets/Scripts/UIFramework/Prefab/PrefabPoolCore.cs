@@ -7,7 +7,11 @@ namespace Game_UIFramework
     {
         private readonly Transform _root;
         private readonly Dictionary<string, Stack<BaseComponent>> _pooled = new Dictionary<string, Stack<BaseComponent>>();
-        private readonly Dictionary<BaseComponent, string> _activePaths = new Dictionary<BaseComponent, string>();
+
+        private readonly Dictionary<int, ActiveInfo> _active = new Dictionary<int, ActiveInfo>();
+
+        private readonly List<int> _pruneBuffer = new List<int>();
+        private readonly List<BaseComponent> _compactBuffer = new List<BaseComponent>();
 
         public PrefabPoolCore(Transform root)
         {
@@ -39,7 +43,7 @@ namespace Game_UIFramework
                         continue;
                     }
 
-                    _activePaths[typed] = path;
+                    _active[typed.GetInstanceID()] = new ActiveInfo(typed, path);
                     (typed as IPoolable)?.OnSpawn();
                     return typed;
                 }
@@ -55,21 +59,22 @@ namespace Game_UIFramework
                 return false;
             }
 
-            if (_activePaths.TryGetValue(comp, out string path) == false)
+            int id = comp.GetInstanceID();
+            if (_active.TryGetValue(id, out ActiveInfo info) == false)
             {
                 return false;
             }
 
-            _activePaths.Remove(comp);
+            _active.Remove(id);
 
             (comp as IPoolable)?.OnDespawn();
             comp.gameObject.SetActive(false);
             comp.CachedTransform.SetParent(_root, false);
 
-            if (_pooled.TryGetValue(path, out Stack<BaseComponent> stack) == false)
+            if (_pooled.TryGetValue(info.Path, out Stack<BaseComponent> stack) == false)
             {
                 stack = new Stack<BaseComponent>();
-                _pooled[path] = stack;
+                _pooled[info.Path] = stack;
             }
             stack.Push(comp);
 
@@ -78,7 +83,7 @@ namespace Game_UIFramework
 
         public bool Contains(BaseComponent comp)
         {
-            return comp != null && _activePaths.ContainsKey(comp);
+            return comp != null && _active.ContainsKey(comp.GetInstanceID());
         }
 
         public void Preload<T>(string path, int count) where T : BaseComponent
@@ -102,6 +107,79 @@ namespace Game_UIFramework
             }
         }
 
+        public int PruneDestroyed()
+        {
+            _pruneBuffer.Clear();
+            foreach (var pair in _active)
+            {
+                if (pair.Value.Comp == null)
+                {
+                    _pruneBuffer.Add(pair.Key);
+                }
+            }
+
+            for (int i = 0; i < _pruneBuffer.Count; i++)
+            {
+                _active.Remove(_pruneBuffer[i]);
+            }
+
+            int removed = _pruneBuffer.Count;
+            _pruneBuffer.Clear();
+
+            CompactPooled();
+            return removed;
+        }
+
+        public void Clear()
+        {
+            foreach (var pair in _pooled)
+            {
+                var stack = pair.Value;
+                while (stack.Count > 0)
+                {
+                    var comp = stack.Pop();
+                    if (comp != null)
+                    {
+                        Object.Destroy(comp.gameObject);
+                    }
+                }
+            }
+
+            _pooled.Clear();
+            _active.Clear();
+            _pruneBuffer.Clear();
+            _compactBuffer.Clear();
+        }
+
+        private void CompactPooled()
+        {
+            foreach (var pair in _pooled)
+            {
+                var stack = pair.Value;
+                if (stack.Count == 0)
+                {
+                    continue;
+                }
+
+                _compactBuffer.Clear();
+                while (stack.Count > 0)
+                {
+                    var comp = stack.Pop();
+                    if (comp != null)
+                    {
+                        _compactBuffer.Add(comp);
+                    }
+                }
+
+                for (int i = _compactBuffer.Count - 1; i >= 0; i--)
+                {
+                    stack.Push(_compactBuffer[i]);
+                }
+            }
+
+            _compactBuffer.Clear();
+        }
+
         private T CreateNew<T>(string path) where T : BaseComponent
         {
             var comp = InstantiateNew<T>(path);
@@ -110,7 +188,7 @@ namespace Game_UIFramework
                 return null;
             }
 
-            _activePaths[comp] = path;
+            _active[comp.GetInstanceID()] = new ActiveInfo(comp, path);
             (comp as IPoolable)?.OnSpawn();
             return comp;
         }
@@ -136,6 +214,18 @@ namespace Game_UIFramework
             }
 
             return comp;
+        }
+
+        private readonly struct ActiveInfo
+        {
+            public readonly BaseComponent Comp;
+            public readonly string Path;
+
+            public ActiveInfo(BaseComponent comp, string path)
+            {
+                Comp = comp;
+                Path = path;
+            }
         }
     }
 }

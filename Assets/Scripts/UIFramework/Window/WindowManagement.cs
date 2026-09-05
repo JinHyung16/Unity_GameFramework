@@ -17,14 +17,38 @@ namespace Game_UIFramework
             if (uiRoot != null)
             {
                 _uiRoot = uiRoot;
+                WarnIfRootHasCanvas(_uiRoot);
             }
             _uiCamera = uiCamera;
+        }
+
+        private static void WarnIfRootHasCanvas(Transform root)
+        {
+            if (root == null)
+            {
+                return;
+            }
+
+            var parentCanvas = root.GetComponentInParent<Canvas>();
+            if (parentCanvas == null)
+            {
+                return;
+            }
+
+            Debug.LogWarning(
+                $"[UIFramework] UIRoot '{root.name}' 위에 Canvas 가 있습니다 ('{parentCanvas.name}'). " +
+                "창 Canvas 가 중첩되어 깊이(sortingOrder) 가 적용되지 않습니다. " +
+                "UIRoot 는 Canvas 없는 빈 GameObject 로 두세요.");
         }
 
         private Dictionary<WindowType, DepthInfo> _depthInfos = new Dictionary<WindowType, DepthInfo>();
         private readonly Dictionary<WindowType, List<BaseWindow>> _openedByType = new Dictionary<WindowType, List<BaseWindow>>();
 
         private readonly List<IWindowUpdate> _updateWindows = new List<IWindowUpdate>();
+
+        private readonly List<IWindowUpdate> _updateBuffer = new List<IWindowUpdate>();
+
+        private bool _tearingDown;
 
         public void AddWindow<T>(WindowKey<T> key, WindowType windowType = WindowType.Normal) where T : BaseWindow
         {
@@ -130,6 +154,19 @@ namespace Game_UIFramework
 
         public void RestoreAllWindows()
         {
+            _tearingDown = true;
+            try
+            {
+                RestoreAllWindowsInternal();
+            }
+            finally
+            {
+                _tearingDown = false;
+            }
+        }
+
+        private void RestoreAllWindowsInternal()
+        {
             foreach (var pair in _windows)
             {
                 var window = pair.Value.Window;
@@ -156,6 +193,7 @@ namespace Game_UIFramework
 
             _openedByType.Clear();
             _updateWindows.Clear();
+            _updateBuffer.Clear();
 
             _depthInfos.Clear();
 
@@ -164,27 +202,35 @@ namespace Game_UIFramework
 
         private void Update()
         {
-            float deltaTime = Time.deltaTime;
-            for (int i = _updateWindows.Count - 1; i >= 0; i--)
+            if (_updateWindows.Count == 0)
             {
-                if (i >= _updateWindows.Count)
-                {
-                    continue;
-                }
-                _updateWindows[i]?.OnUpdate(deltaTime);
+                return;
+            }
+
+            float deltaTime = Time.deltaTime;
+            _updateBuffer.Clear();
+            _updateBuffer.AddRange(_updateWindows);
+
+            for (int i = 0; i < _updateBuffer.Count; i++)
+            {
+                _updateBuffer[i]?.OnUpdate(deltaTime);
             }
         }
 
         private void FixedUpdate()
         {
-            float fixedDeltaTime = Time.fixedDeltaTime;
-            for (int i = _updateWindows.Count - 1; i >= 0; i--)
+            if (_updateWindows.Count == 0)
             {
-                if (i >= _updateWindows.Count)
-                {
-                    continue;
-                }
-                _updateWindows[i]?.OnFixedUpdate(fixedDeltaTime);
+                return;
+            }
+
+            float fixedDeltaTime = Time.fixedDeltaTime;
+            _updateBuffer.Clear();
+            _updateBuffer.AddRange(_updateWindows);
+
+            for (int i = 0; i < _updateBuffer.Count; i++)
+            {
+                _updateBuffer[i]?.OnFixedUpdate(fixedDeltaTime);
             }
         }
 
@@ -214,7 +260,13 @@ namespace Game_UIFramework
             var windowList = GetWindowList(windowType);
             if (!windowList.Contains(window))
             {
+                var covered = windowList.Count > 0 ? windowList[windowList.Count - 1] : null;
                 windowList.Add(window);
+
+                if (covered != null && _tearingDown == false)
+                {
+                    covered.OtherWindowOpened();
+                }
             }
             ReassignDepths(windowType);
 
@@ -231,8 +283,15 @@ namespace Game_UIFramework
 
             var windowType = window.GetWindowType();
             var windowList = GetWindowList(windowType);
+
+            bool wasTop = windowList.Count > 0 && windowList[windowList.Count - 1] == window;
             windowList.Remove(window);
             ReassignDepths(windowType);
+
+            if (wasTop && windowList.Count > 0 && _tearingDown == false)
+            {
+                windowList[windowList.Count - 1].ReOpened();
+            }
 
             if (window is IWindowUpdate updatable)
             {
@@ -308,6 +367,7 @@ namespace Game_UIFramework
                     rootGo = new GameObject("UIRoot");
                 }
                 _uiRoot = rootGo.transform;
+                WarnIfRootHasCanvas(_uiRoot);
             }
         }
     }

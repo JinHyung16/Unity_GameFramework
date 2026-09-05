@@ -467,9 +467,55 @@ public class TitleManagement : BaseManagement
 }
 ```
 
-- 프리팹 루트에 `Canvas` + 해당 창 스크립트를 붙인다.
+- 프리팹 루트에 `Canvas` + `GraphicRaycaster` + 해당 창 스크립트를 붙인다.
+- **`UIRoot` 에는 `Canvas` 를 붙이지 않는다.** 창 Canvas 가 중첩되면 깊이가 먹지 않는다.
 - 창 등록은 `AddWindows()`에서만 한다.
 - 매 프레임 갱신이 필요하면 `IWindowUpdate`를 구현한다. 열려 있는 동안에만 호출된다.
+
+### 창의 생명주기는 Open / Close 로만 다룬다
+
+**창 스크립트에 `OnEnable` · `OnDisable` 을 쓰지 않는다.** 창을 여닫으면 `GameObject` 가 켜지고 꺼지므로 그 둘도 불리기는 한다. 다만 창의 수명은 `Open` / `Close` 로만 다룬다 — 프레임워크는 그 콜백에 아무것도 걸지 않는다.
+
+| 시점 | 재정의할 것 |
+|------|------------|
+| 열릴 때 | `OnOpening()` |
+| 위로 다른 창이 열려 가려질 때 | `OnOtherWindowOpened()` |
+| 위 창이 닫혀 다시 드러날 때 | `OnReOpened()` |
+| 닫히기 직전 | `BeforeClosed()` |
+| 닫힐 때 | `OnClose()` |
+| 닫아도 되는지 판정 | `HandleCanClose()` — `CloseType.Handle` 일 때만 |
+
+`OnEnable` 은 씬 로드나 부모 비활성화 같은 다른 경로로도 불려서 "열렸다"와 일대일로 맞지 않는다. 직접 `Open` 한 창은 직접 `Close` 하면서 정리하는 편이 흐름이 분명하다.
+
+`Awake` 는 창을 처음 만들 때 한 번 불린다. 여닫을 때마다 필요한 정리는 `OnClose()` 에 둔다.
+
+### 가려질 때와 다시 드러날 때
+
+같은 `WindowType` 안에서 창이 겹치면 위아래가 생긴다. 그때 아래 창에게 알려준다.
+
+```csharp
+public class ShopWindow : BaseWindow
+{
+    protected override void OnOtherWindowOpened()
+    {
+        // 구매 팝업이 위에 떴다. 가려진 동안 갱신을 멈춘다.
+        StopRefreshTimer();
+    }
+
+    protected override void OnReOpened()
+    {
+        // 팝업이 닫혀 다시 맨 위가 됐다. 그 사이 바뀐 재화를 다시 읽는다.
+        RefreshCurrency();
+        StartRefreshTimer();
+    }
+}
+```
+
+맨 위 창이 닫힐 때만 그 아래 창이 `OnReOpened()` 를 받는다. 중간 창이 닫히면 위아래 관계가 그대로라 아무 통지도 가지 않는다.
+
+씬을 정리하며 창을 한꺼번에 파괴할 때는 이 통지를 보내지 않는다. 곧 사라질 창이 데이터를 다시 읽는 일을 막기 위해서다.
+
+닫힌 창은 `GameObject` 가 꺼지므로 그 안의 `Update` · 코루틴 · `Animator` 도 함께 멈춘다. 그리기만 잠시 멈추고 싶으면 `CanvasEnable` 을 쓴다 — 여닫기용이 아니다.
 
 ### 창이 열리고 닫히는 흐름
 
@@ -497,7 +543,7 @@ OpenWindow(key, onOpenBefore, onOpenAfter)
             │                               타입별 열린 순서 리스트에 추가
             │                               ReassignDepths  깊이를 처음부터 다시 매긴다
             │                               IWindowUpdate 면 Update 대상에 등록
-            SetEnable(true)
+            SetEnable(true)           gameObject.SetActive(true)
             onOpenBefore → OnOpening()
             SetState(Opened)
             onOpenAfter
@@ -522,6 +568,8 @@ ForcedClose()    위 두 검사를 건너뛴다
 ### 깊이
 
 `WindowType`이 `Canvas.sortingOrder` 대역을 정한다. 같은 타입 안에서는 열린 순서대로 쌓이고, 중간 창이 닫히면 남은 창들이 자동으로 재정렬된다.
+
+**UIRoot 에는 `Canvas` 를 두지 않는다.** 창은 저마다 `Canvas` 를 갖는데, 부모에도 `Canvas` 가 있으면 창 Canvas 가 중첩되어 `sortingOrder` 가 통째로 무시된다. `UIRoot` 는 빈 `GameObject` 여야 하고, 위에 Canvas 가 있으면 `WindowManagement` 가 경고를 띄운다.
 
 | WindowType | 시작 깊이 |
 |-----------|----------|
@@ -591,7 +639,7 @@ Auto.Release(comp)
 |------|------|
 | `WindowManagement` | 씬당 하나. 창 등록·생성·개폐·깊이 재정렬·`IWindowUpdate` 분배 |
 | `BaseManagement` | 화면별 관리자의 부모. `AddWindows()` 에서 창을 등록한다. `Get<T>()` 로 다른 Management 를 찾는다 |
-| `BaseWindow` | 창의 부모. 상태 전이, 옵저버 통지, `Canvas.sortingOrder` 반영 |
+| `BaseWindow` | 창의 부모. 상태 전이, 옵저버 통지, 깊이 반영, 가림/재노출 통지. `SetEnable()` 로 `GameObject` 를 켜고 끈다 |
 | `BaseComponent` | UI 조각의 부모. `Transform` · `RectTransform` 을 캐싱한다 |
 | `WindowKey` / `WindowKey<T>` | `Resources` 기준 경로를 담는 식별자. `T` 로 창 타입을 묶는다 |
 | `WindowKeyEqualityComparer` | `Path` 기준 비교자. 딕셔너리 키로 쓴다 |

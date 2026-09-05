@@ -5,6 +5,8 @@ namespace Game_UIFramework
         bool IsOpen();
         void Close();
         void ForcedClose();
+        void OtherWindowOpened();
+        void ReOpened();
         int GetDepth();
         string GetName();
         WindowType GetWindowType();

@@ -20,7 +20,6 @@ namespace Game_UIFramework
 
         protected WindowStateType _windowState = WindowStateType.Closed;
         private List<IWindowObserver> _observers = new List<IWindowObserver>();
-        private int _currentDepth = 0;
 
         public WindowType WindowType
         {
@@ -66,6 +65,24 @@ namespace Game_UIFramework
             BaseClose();
         }
 
+        public void OtherWindowOpened()
+        {
+            if (IsOpen() == false)
+            {
+                return;
+            }
+            OnOtherWindowOpened();
+        }
+
+        public void ReOpened()
+        {
+            if (IsOpen() == false)
+            {
+                return;
+            }
+            OnReOpened();
+        }
+
         public void AddObserver(IWindowObserver observer)
         {
             if (observer != null && !_observers.Contains(observer))
@@ -84,7 +101,11 @@ namespace Game_UIFramework
             if (_canvas == null)
                 return;
 
-            _currentDepth = depth;
+            if (_canvas.sortingOrder == depth)
+            {
+                return;
+            }
+
             _canvas.sortingOrder = depth;
         }
 
@@ -114,7 +135,9 @@ namespace Game_UIFramework
             set
             {
                 if (_canvas != null)
+                {
                     _canvas.enabled = value;
+                }
             }
         }
 
@@ -131,6 +154,14 @@ namespace Game_UIFramework
         }
 
         protected virtual void OnOpening()
+        {
+        }
+
+        protected virtual void OnOtherWindowOpened()
+        {
+        }
+
+        protected virtual void OnReOpened()
         {
         }
 
