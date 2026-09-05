@@ -7,9 +7,12 @@ namespace Game_UIFramework
     {
         public string Path { get; private set; }
 
+        private readonly int _hash;
+
         public WindowKey(string path)
         {
             Path = path ?? string.Empty;
+            _hash = Path.GetHashCode();
         }
 
         public override bool Equals(object obj)
@@ -23,7 +26,7 @@ namespace Game_UIFramework
 
         public override int GetHashCode()
         {
-            return Path?.GetHashCode() ?? 0;
+            return _hash;
         }
     }
 
@@ -47,7 +50,7 @@ namespace Game_UIFramework
 
         public int GetHashCode(WindowKey obj)
         {
-            return obj?.Path?.GetHashCode() ?? 0;
+            return obj?.GetHashCode() ?? 0;
         }
     }
 }

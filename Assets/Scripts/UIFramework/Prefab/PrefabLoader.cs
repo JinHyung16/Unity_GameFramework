@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace Game_UIFramework
 {
@@ -11,6 +12,12 @@ namespace Game_UIFramework
             base.Awake();
             Core = new PrefabPoolCore(transform);
         }
+
+        protected override void OnDestroy()
+        {
+            Core?.Clear();
+            base.OnDestroy();
+        }
     }
 
     public class GlobalPrefabPool : MonoSingleton<GlobalPrefabPool>
@@ -21,6 +28,20 @@ namespace Game_UIFramework
         {
             base.Awake();
             Core = new PrefabPoolCore(transform);
+
+            SceneManager.sceneUnloaded += OnSceneUnloaded;
+        }
+
+        protected override void OnDestroy()
+        {
+            SceneManager.sceneUnloaded -= OnSceneUnloaded;
+            Core?.Clear();
+            base.OnDestroy();
+        }
+
+        private void OnSceneUnloaded(Scene scene)
+        {
+            Core?.PruneDestroyed();
         }
     }
 
@@ -67,6 +88,27 @@ namespace Game_UIFramework
 
             Debug.LogWarning($"PrefabLoader: {comp.name} is not from pool. Destroyed.");
             Object.Destroy(comp.gameObject);
+        }
+
+        public static void PruneDestroyed()
+        {
+            if (GlobalPrefabPool.IsValidInstance)
+            {
+                GlobalPrefabPool.Instance.Core.PruneDestroyed();
+            }
+
+            if (ScenePrefabPool.IsValidInstance)
+            {
+                ScenePrefabPool.Instance.Core.PruneDestroyed();
+            }
+        }
+
+        public static void ClearScenePool()
+        {
+            if (ScenePrefabPool.IsValidInstance)
+            {
+                ScenePrefabPool.Instance.Core.Clear();
+            }
         }
     }
 }
