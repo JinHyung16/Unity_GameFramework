@@ -47,13 +47,9 @@ const PYTHON_RUNNER = [
 
 class SmartExcelExporter {
     constructor(options = {}) {
-        // Side-project friendly defaults
-        this.gamedataPath = options.gamedataPath || path.join(process.cwd(), 'gamedata');
-        this.jsonOutputPath = options.jsonOutputPath || path.join(process.cwd(), 'jsondata');
-        this.configPath = options.configPath || path.join(process.cwd(), 'config.json');
-        // 스키마 출력 경로 — Unity의 DB Generate가 이 파일을 읽어 C#을 만든다.
-        // 런타임에는 쓰이지 않으므로 Addressables 대상인 GameData/ 바깥에 둔다.
-        this.schemaOutputPath = options.schemaOutputPath || null;
+        // 프로젝트 루트 = _DataExporter 의 한 단계 위. config 의 상대 경로는 전부 이 기준이다.
+        this.rootPath = options.rootPath || path.resolve(__dirname, '..');
+        this.configPath = options.configPath || path.join(__dirname, 'config.json');
         this.verbose = options.verbose || false;
 
         // 시트별 컬럼 스키마(이름/자료형) — _Schema.json 출력용
@@ -93,6 +89,7 @@ class SmartExcelExporter {
         ];
 
         this.loadConfig();
+        this.resolvePaths(options);
         this.resolveActiveExtensions();
         this.initializeExcludePatterns();
         this.loadEnumDefinitions();
@@ -199,6 +196,37 @@ class SmartExcelExporter {
             this.log(`설정 파일 로드 실패: ${error.message}`, 'error');
             this.config = {};
         }
+    }
+
+    /**
+     * 경로 확정 — config.json 의 Paths 가 기준이고, 환경변수가 있으면 그쪽이 이긴다.
+     * config 의 상대 경로는 프로젝트 루트 기준으로 푼다. Unity 의 DbGenerator 도 같은 값을 읽는다.
+     */
+    resolvePaths(options) {
+        const paths = this.config.Paths || {};
+
+        const resolve = (value, fallback) => {
+            const picked = value || fallback;
+            return path.isAbsolute(picked) ? picked : path.resolve(this.rootPath, picked);
+        };
+
+        this.gamedataPath = options.gamedataPath
+            || process.env.GAMEDATA_PATH
+            || resolve(paths.SourceFolder, '_DataExporter/GameData');
+
+        this.jsonOutputPath = options.jsonOutputPath
+            || process.env.JSON_OUTPUT_PATH
+            || resolve(paths.JsonOutput, 'Assets/GameData');
+
+        // 스키마는 Unity 의 DB Generate 가 읽는다. 런타임에는 쓰이지 않으므로
+        // Addressables 대상인 JSON 폴더 바깥에 둔다.
+        this.schemaOutputPath = options.schemaOutputPath
+            || process.env.SCHEMA_OUTPUT_PATH
+            || resolve(paths.SchemaOutput, 'Assets/GameDataSchema/_Schema.json');
+
+        this.log(`입력      : ${this.gamedataPath}`, 'debug');
+        this.log(`JSON 출력 : ${this.jsonOutputPath}`, 'debug');
+        this.log(`스키마    : ${this.schemaOutputPath}`, 'debug');
     }
 
     /**
@@ -1711,10 +1739,7 @@ function main() {
     const command = args[0] || 'all';
 
     const options = {
-        gamedataPath: process.env.GAMEDATA_PATH || path.join(process.cwd(), 'gamedata'),
-        jsonOutputPath: process.env.JSON_OUTPUT_PATH || path.join(process.cwd(), 'jsondata'),
-        configPath: process.env.CONFIG_PATH || path.join(process.cwd(), 'config.json'),
-        schemaOutputPath: process.env.SCHEMA_OUTPUT_PATH || null,
+        configPath: process.env.CONFIG_PATH || null,
         verbose: args.includes('--verbose') || args.includes('-v')
     };
 

@@ -8,16 +8,11 @@ echo    Hugh Excel to JSON Exporter
 echo ====================================
 echo.
 
-:: Path settings (this folder is the project root)
+:: Path settings
+:: All input/output paths live in config.json ("Paths"), resolved against the repo root.
+:: Override per-run with --in / --out below; otherwise nothing here needs editing.
+:: NOTE: C# is NOT generated here. Run Unity > Tools > GameData > DB Generate (Ctrl+G).
 set "SCRIPT_DIR=%~dp0"
-:: This folder lives at the repo root (outside Assets\), so Unity ignores it entirely.
-:: Input : _DataExporter\GameData\                    (xlsx / js / py source; git tracked)
-:: Output: Assets\GameData\                           (json · Addressables group 'GameData', label 'game_data')
-::         Assets\GameDataSchema\_Schema.json          (column/type schema; Unity 'DB Generate' reads this)
-:: NOTE  : C# is NOT generated here. Run Unity > Tools > GameData > DB Generate (Ctrl+G).
-set "GAMEDATA_PATH=%SCRIPT_DIR%GameData\"
-set "JSON_OUTPUT_PATH=%SCRIPT_DIR%..\Assets\GameData\"
-set "SCHEMA_OUTPUT_PATH=%SCRIPT_DIR%..\Assets\GameDataSchema\_Schema.json"
 set "CONFIG_PATH=%SCRIPT_DIR%config.json"
 set "NODE_SCRIPT=%SCRIPT_DIR%smart_exporter.js"
 
@@ -111,27 +106,18 @@ if not "%CUSTOM_OUT%"=="" set "JSON_OUTPUT_PATH=%CUSTOM_OUT%"
 if not "%CUSTOM_CONFIG%"=="" set "CONFIG_PATH=%CUSTOM_CONFIG%"
 
 :: Create output directory (after overrides)
-if not exist "%JSON_OUTPUT_PATH%" (
-    echo [CREATE] Creating JSON output folder: %JSON_OUTPUT_PATH%
-    mkdir "%JSON_OUTPUT_PATH%" 2>nul
-)
-
 :: Execute
 echo [START] Starting Export...
 echo    Command: %COMMAND%
-echo    Input (GAMEDATA_PATH): %GAMEDATA_PATH%
-echo    Output JSON (JSON_OUTPUT_PATH): %JSON_OUTPUT_PATH%
-echo    Output Schema (SCHEMA_OUTPUT_PATH): %SCHEMA_OUTPUT_PATH%
 echo    Config (CONFIG_PATH): %CONFIG_PATH%
+echo    (paths come from config.json "Paths" unless --in / --out is given)
 echo.
 
 cd /d "%SCRIPT_DIR%"
 
 :: Pass paths via environment variables (smart_exporter.js reads these)
-set "GAMEDATA_PATH=%GAMEDATA_PATH%"
-set "JSON_OUTPUT_PATH=%JSON_OUTPUT_PATH%"
-set "SCHEMA_OUTPUT_PATH=%SCHEMA_OUTPUT_PATH%"
-set "CONFIG_PATH=%CONFIG_PATH%"
+if not "%CUSTOM_IN%"=="" set "GAMEDATA_PATH=%CUSTOM_IN%"
+if not "%CUSTOM_OUT%"=="" set "JSON_OUTPUT_PATH=%CUSTOM_OUT%"
 
 if "%COMMAND%"=="file" (
     node "%NODE_SCRIPT%" file %FILES% %VERBOSE%
@@ -161,8 +147,8 @@ echo.
 echo Options:
 echo   --modified, -m   Process modified files only
 echo   --verbose, -v    Show detailed logs
-echo   --in PATH        Input folder containing .xlsx files (default: .\GameData\)
-echo   --out PATH       Output folder to write .json files (default: ..\Assets\GameData\)
+echo   --in PATH        Input folder      (default: config.json Paths.SourceFolder)
+echo   --out PATH       JSON output folder (default: config.json Paths.JsonOutput)
 echo   --config PATH    Config file path (default: .\config.json)
 echo   --help, -h       Show this help
 echo.

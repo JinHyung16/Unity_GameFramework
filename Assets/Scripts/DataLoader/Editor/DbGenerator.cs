@@ -11,13 +11,6 @@ namespace Game_DataLoader
 {
     public static class DbGenerator
     {
-        public const string SchemaPath = "Assets/GameDataSchema/_Schema.json";
-        public const string DataLoaderFolder = "Assets/Scripts/DataLoader";
-        public const string GeneratedFolder = DataLoaderFolder + "/Generated";
-        public const string ContainersFolder = DataLoaderFolder + "/Containers";
-        public const string GameEnumPath = DataLoaderFolder + "/GameEnum.cs";
-        public const string GameRootPath = "Assets/Scripts/Game/Core/GameRoot.Generated.cs";
-
         public const string ContainersFileName = "Containers.Generated.cs";
         public const string Namespace = "Game_DataLoader";
         public const string EnumNamespace = "Game";
@@ -36,16 +29,19 @@ namespace Game_DataLoader
         [MenuItem("Tools/GameData/DB Generate %g", false, 10)]
         public static void Generate()
         {
-            if (File.Exists(SchemaPath) == false)
+            DataPipelinePaths paths = DataPipelineConfig.Load();
+            string schemaPath = DataPipelineConfig.Resolve(paths.SchemaOutput);
+
+            if (File.Exists(schemaPath) == false)
             {
-                Debug.LogError($"[DbGenerator] 스키마가 없습니다: {SchemaPath}\n_DataExporter/run_win.bat 을 먼저 실행하세요.");
+                Debug.LogError($"[DbGenerator] 스키마가 없습니다: {paths.SchemaOutput}\n_DataExporter/run_win.bat 을 먼저 실행하세요. 경로는 Tools > GameData > Settings 에서 바꿉니다.");
                 return;
             }
 
             JObject root;
             try
             {
-                root = JObject.Parse(File.ReadAllText(SchemaPath));
+                root = JObject.Parse(File.ReadAllText(schemaPath));
             }
             catch (Exception e)
             {
@@ -57,22 +53,23 @@ namespace Game_DataLoader
             List<string> enumOrder = new List<string>();
             Dictionary<string, List<string>> enums = ReadEnums(root, enumOrder);
 
-            int enumCount = WriteGameEnum(enumOrder, enums);
-            int tableCount = WriteDataClasses(tables, enums);
-            WriteContainers(tables, enums);
-            int rootCount = WriteGameRoot();
+            int enumCount = WriteGameEnum(enumOrder, enums, paths);
+            int tableCount = WriteDataClasses(tables, enums, paths);
+            WriteContainers(tables, enums, paths);
+            int rootCount = WriteGameRoot(paths);
 
             AssetDatabase.Refresh();
             Debug.Log($"[DbGenerator] 생성 완료 — 표 {tableCount}개, enum {enumCount}개, 컨테이너 프로퍼티 {rootCount}개");
         }
 
-        [MenuItem("Tools/GameData/스키마 파일 선택", false, 11)]
+        [MenuItem("Tools/GameData/스키마 파일 선택", false, 12)]
         private static void PingSchema()
         {
-            TextAsset asset = AssetDatabase.LoadAssetAtPath<TextAsset>(SchemaPath);
+            string schemaPath = DataPipelineConfig.Load().SchemaOutput;
+            TextAsset asset = AssetDatabase.LoadAssetAtPath<TextAsset>(schemaPath);
             if (asset == null)
             {
-                Debug.LogWarning($"[DbGenerator] 스키마가 없습니다: {SchemaPath}");
+                Debug.LogWarning($"[DbGenerator] 스키마를 에셋으로 찾지 못했습니다: {schemaPath}");
                 return;
             }
             EditorGUIUtility.PingObject(asset);
@@ -148,7 +145,7 @@ namespace Game_DataLoader
             return result;
         }
 
-        private static int WriteGameEnum(List<string> order, Dictionary<string, List<string>> enums)
+        private static int WriteGameEnum(List<string> order, Dictionary<string, List<string>> enums, DataPipelinePaths paths)
         {
             if (order.Count == 0)
             {
@@ -180,13 +177,14 @@ namespace Game_DataLoader
 
             sb.AppendLine("    }");
             sb.AppendLine("}");
-            WriteIfChanged(GameEnumPath, sb.ToString());
+            WriteIfChanged(DataPipelineConfig.Resolve(paths.GameEnumFile), sb.ToString());
             return order.Count;
         }
 
-        private static int WriteDataClasses(Dictionary<string, List<Column>> tables, Dictionary<string, List<string>> enums)
+        private static int WriteDataClasses(Dictionary<string, List<Column>> tables, Dictionary<string, List<string>> enums, DataPipelinePaths paths)
         {
-            EnsureFolder(GeneratedFolder);
+            string generatedFolder = DataPipelineConfig.Resolve(paths.GeneratedFolder);
+            EnsureFolder(generatedFolder);
 
             var keep = new HashSet<string>();
             foreach (KeyValuePair<string, List<Column>> table in tables)
@@ -217,18 +215,18 @@ namespace Game_DataLoader
                 sb.AppendLine("    }");
                 sb.AppendLine("}");
 
-                string path = GeneratedFolder + "/" + table.Key + ".cs";
+                string path = generatedFolder + "/" + table.Key + ".cs";
                 keep.Add(Path.GetFullPath(path));
                 WriteIfChanged(path, sb.ToString());
             }
 
-            DeleteStaleGenerated(keep);
+            DeleteStaleGenerated(keep, generatedFolder, paths.GeneratedFolder);
             return tables.Count;
         }
 
-        private static void DeleteStaleGenerated(HashSet<string> keep)
+        private static void DeleteStaleGenerated(HashSet<string> keep, string generatedFolder, string generatedRelative)
         {
-            foreach (string path in Directory.GetFiles(GeneratedFolder, "*.cs"))
+            foreach (string path in Directory.GetFiles(generatedFolder, "*.cs"))
             {
                 if (Path.GetFileName(path) == ContainersFileName)
                 {
@@ -238,14 +236,23 @@ namespace Game_DataLoader
                 {
                     continue;
                 }
-                AssetDatabase.DeleteAsset(path.Replace('\\', '/'));
-                Debug.Log($"[DbGenerator] 스키마에 없는 생성 파일 삭제: {Path.GetFileName(path)}");
+                string fileName = Path.GetFileName(path);
+                if (DataPipelineConfig.IsInsideAssets(generatedRelative))
+                {
+                    AssetDatabase.DeleteAsset(generatedRelative + "/" + fileName);
+                }
+                else
+                {
+                    File.Delete(path);
+                }
+                Debug.Log($"[DbGenerator] 스키마에 없는 생성 파일 삭제: {fileName}");
             }
         }
 
-        private static void WriteContainers(Dictionary<string, List<Column>> tables, Dictionary<string, List<string>> enums)
+        private static void WriteContainers(Dictionary<string, List<Column>> tables, Dictionary<string, List<string>> enums, DataPipelinePaths paths)
         {
-            EnsureFolder(GeneratedFolder);
+            string generatedFolder = DataPipelineConfig.Resolve(paths.GeneratedFolder);
+            EnsureFolder(generatedFolder);
 
             var sb = new StringBuilder();
             sb.Append(AutoHeader);
@@ -286,7 +293,7 @@ namespace Game_DataLoader
             }
 
             sb.AppendLine("}");
-            WriteIfChanged(GeneratedFolder + "/" + ContainersFileName, sb.ToString());
+            WriteIfChanged(generatedFolder + "/" + ContainersFileName, sb.ToString());
         }
 
         private static void AppendCodeContainer(StringBuilder sb, string name, string keyType)
@@ -350,12 +357,13 @@ namespace Game_DataLoader
             sb.AppendLine("    }");
         }
 
-        private static int WriteGameRoot()
+        private static int WriteGameRoot(DataPipelinePaths paths)
         {
-            List<string> names = CollectConcreteContainers();
-            if (names.Count == 0 && File.Exists(GameRootPath))
+            string gameRootPath = DataPipelineConfig.Resolve(paths.GameRootFile);
+            List<string> names = CollectConcreteContainers(DataPipelineConfig.Resolve(paths.ContainersFolder));
+            if (names.Count == 0 && File.Exists(gameRootPath))
             {
-                Debug.LogWarning($"[DbGenerator] 콘크리트 컨테이너가 없어 GameRoot 생성을 건너뜁니다: {ContainersFolder}");
+                Debug.LogWarning($"[DbGenerator] 콘크리트 컨테이너가 없어 GameRoot 생성을 건너뜁니다: {paths.ContainersFolder}");
                 return 0;
             }
 
@@ -376,21 +384,21 @@ namespace Game_DataLoader
             sb.AppendLine("    }");
             sb.AppendLine("}");
 
-            WriteIfChanged(GameRootPath, sb.ToString());
+            WriteIfChanged(gameRootPath, sb.ToString());
             return names.Count;
         }
 
-        private static List<string> CollectConcreteContainers()
+        private static List<string> CollectConcreteContainers(string containersFolder)
         {
             var names = new List<string>();
-            if (Directory.Exists(ContainersFolder) == false)
+            if (Directory.Exists(containersFolder) == false)
             {
                 return names;
             }
 
             var pattern = new Regex(@"public\s+(?:sealed\s+)?class\s+(\w+)\s*:\s*\w*(?:CodeContainer|DictionaryContainer|DictionaryGroupContainer|ListContainer)\b");
 
-            foreach (string path in Directory.GetFiles(ContainersFolder, "*.cs", SearchOption.AllDirectories))
+            foreach (string path in Directory.GetFiles(containersFolder, "*.cs", SearchOption.AllDirectories))
             {
                 foreach (Match match in pattern.Matches(File.ReadAllText(path)))
                 {

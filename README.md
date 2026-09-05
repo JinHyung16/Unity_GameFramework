@@ -55,8 +55,9 @@
    ├─ run_win.bat                     실행 진입점
    ├─ smart_exporter.js               소스 로딩 · 파싱 → JSON + 스키마  (SOURCE_EXTENSIONS 여기)
    ├─ enum_name.js                    enum 이름 정규화 규칙
-   ├─ config.json                     표/열 제외 규칙
-   └─ GameData/                       원본 .xlsx · .js · .py
+   ├─ config.json                     경로(Paths) + 표/열 제외 규칙
+   ├─ GameData/                       원본 .xlsx · .js · .py
+   └─ DataExample/                    예제 원본 (xlsx + js)
 ```
 
 `(생성)` 표시된 경로는 도구가 덮어쓴다. 직접 수정하지 않는다. `Assets/Resources/` 와 `Assets/GameData/` 는 저장소에 없다 — 앞은 직접 만들고, 뒤는 첫 변환 때 도구가 만든다.
@@ -91,6 +92,8 @@ Assets/Scripts/DataLoader/GameEnum.cs                        Game.GameEnum.XxxTy
 Assets/Scripts/Game/Core/GameRoot.Generated.cs               컨테이너 접근 프로퍼티
 ```
 
+경로는 전부 `config.json` 의 `Paths` 에서 온다 (아래 [경로 설정](#경로-설정)).
+
 `run_win.bat` 은 C# 을 한 줄도 만들지 않는다. 기획자가 올리는 것은 원본 파일과 `Assets/GameData/`, `Assets/GameDataSchema/` 뿐이다.
 
 ### 왜 스키마 파일이 따로 필요한가
@@ -108,9 +111,50 @@ Unity 메뉴 **Tools > GameData > DB Generate** 또는 **Ctrl+G**.
 - 스키마에서 사라진 표의 `Generated/*.cs` 는 지운다.
 - `Containers/` 를 스캔해 `GameRoot.Generated.cs` 를 갱신한다. 콘크리트 컨테이너를 추가·삭제한 뒤에도 다시 실행한다.
 
+### 경로 설정
+
+입력·출력 경로는 **`_DataExporter/config.json` 의 `Paths` 한 곳**에 있다. Node 익스포터와 Unity 의 DB Generate 가 같은 파일을 읽으므로 한 번만 고치면 양쪽에 반영된다.
+
+Unity 메뉴 **Tools > GameData > Settings** 에서 편집한다.
+
+| 항목 | 쓰는 쪽 | 기본값 |
+|------|--------|--------|
+| `SourceFolder` | run_win.bat | `_DataExporter/GameData` |
+| `JsonOutput` | run_win.bat | `Assets/GameData` |
+| `SchemaOutput` | 양쪽 | `Assets/GameDataSchema/_Schema.json` |
+| `GeneratedFolder` | DB Generate | `Assets/Scripts/DataLoader/Generated` |
+| `ContainersFolder` | DB Generate | `Assets/Scripts/DataLoader/Containers` |
+| `GameEnumFile` | DB Generate | `Assets/Scripts/DataLoader/GameEnum.cs` |
+| `GameRootFile` | DB Generate | `Assets/Scripts/Game/Core/GameRoot.Generated.cs` |
+
+상대 경로는 프로젝트 루트(`Assets` 의 부모) 기준이다. 절대 경로도 넣을 수 있다.
+
+설정 창은 저장 전에 몇 가지를 검사한다 — 원본 폴더가 없을 때, 스키마가 JSON 출력 폴더 안에 있을 때(빌드에 딸려간다), 코드 출력 폴더가 `Assets` 밖일 때(컴파일되지 않는다).
+
+한 번만 다른 폴더로 돌리고 싶으면 config 를 건드리지 말고 CLI 를 쓴다.
+
+```bash
+node smart_exporter.js all --in DataExample
+```
+
+### 예제
+
+`_DataExporter/DataExample/` 에 두 포맷의 예제가 있다.
+
+| 파일 | 보여주는 것 |
+|------|------------|
+| `HeroData.xlsx` | `int!` `string!` `float` `bool` `stringArray`, 한글 값 |
+| `LevelData.js` | 상수와 루프로 20행 생성 |
+
+```bash
+node smart_exporter.js all --in DataExample
+```
+
+로 변환한 뒤 Unity 에서 **Ctrl+G** 를 누르면 전체 흐름을 한 번에 볼 수 있다.
+
 ### 원본 파일 — 위치와 확장자
 
-모든 원본은 **`_DataExporter/GameData/`** 에 넣는다. 하위 폴더는 스캔하지 않는다.
+원본은 `Paths.SourceFolder`(기본 `_DataExporter/GameData/`) 에 넣는다. 하위 폴더는 스캔하지 않는다.
 
 | 확장자 | 용도 | 비고 |
 |--------|------|------|
@@ -588,4 +632,4 @@ node smart_exporter.js file HeroData.xlsx LevelData.js ShopData.py
 
 C# 은 만들지 않는다. 변환 후 Unity 에서 **Ctrl+G**(DB Generate)를 눌러야 코드가 갱신된다.
 
-`--verbose` 로 상세 로그. 경로는 `GAMEDATA_PATH` · `JSON_OUTPUT_PATH` · `SCHEMA_OUTPUT_PATH` · `CONFIG_PATH` 환경변수로 덮어쓸 수 있다(`run_win.bat` 이 설정한다).
+`--verbose` 로 상세 로그. 경로는 `config.json` 의 `Paths` 가 기본이고, `--in` / `--out` 또는 `GAMEDATA_PATH` · `JSON_OUTPUT_PATH` · `SCHEMA_OUTPUT_PATH` 환경변수가 그보다 우선한다.
