@@ -2,7 +2,6 @@
   "Paths": {
     "SourceFolder": "_DataExporter/GameData",
     "JsonOutput": "Assets/GameData",
-    "SchemaOutput": "Assets/GameDataSchema/_Schema.json",
     "GeneratedFolder": "Assets/Scripts/DataLoader/Generated",
     "ContainersFolder": "Assets/Scripts/DataLoader/Containers",
     "GameEnumFile": "Assets/Scripts/DataLoader/GameEnum.cs",

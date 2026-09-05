@@ -5,7 +5,7 @@
 | 모듈 | 역할 |
 |------|------|
 | **UIFramework** | 창(Window) 생명주기·깊이 관리, 프리팹 풀링, 재활용 스크롤 |
-| **DataLoader** + **_DataExporter** | 엑셀·JS·Python → JSON + 스키마 → C# 코드 생성 → 런타임 로드 |
+| **DataLoader** | 엑셀·CSV·JS·TS·Python → JSON → C# 코드 생성 → 런타임 로드 |
 
 ## Requirements
 
@@ -15,16 +15,19 @@
 | `com.unity.ugui` | `UnityEngine.UI` — `BaseWindow` · `BaseComponent` · `RecyclableScrollView`. Unity 6 에서는 TextMeshPro 도 여기 포함된다 |
 | `com.unity.nuget.newtonsoft-json` | JSON 역직렬화 |
 | `com.unity.addressables` | `DataManager` 의 JSON 로드 |
-| Node.js **14+** | `_DataExporter` 실행 (Unity 외부) |
-| Python **3.x** *(선택)* | `.py` 데이터 파일을 쓸 때만. 없으면 `.py` 만 건너뛰고 나머지는 변환된다 |
+| Node.js *(선택)* | `.js` · `.ts` 원본을 쓸 때만 |
+| tsx *(선택)* | `.ts` 원본을 쓸 때만 (`npm i -g tsx`) |
+| Python **3.x** *(선택)* | `.py` 원본을 쓸 때만 |
+
+`.xlsx` 와 `.csv` 는 외부 런타임 없이 읽는다. 선택 항목이 없으면 그 확장자만 건너뛰고 나머지는 정상 변환된다.
 
 동작을 확인한 조합은 Unity `6000.3.13f1` · ugui `2.0.0` · newtonsoft-json `3.2.1` · addressables `2.3.16` 이다.
 
 ## Install
 
 1. `Assets/` 내용을 프로젝트 `Assets/`에 복사한다.
-2. `_DataExporter/`는 프로젝트 루트(`Assets` 바깥)에 둔다 — Unity가 무시한다.
-3. [Addressables 설정](#addressables-설정)을 한 번 해준다. 안 하면 데이터가 로드되지 않는다.
+2. `_DataExporter/`는 프로젝트 루트(`Assets` 바깥)에 둔다 — 원본 데이터 폴더다.
+3. **Tools > GameData > Setup Addressables** 를 한 번 실행한다. 안 하면 런타임에 데이터가 비어 있다.
 
 ## 디렉터리 구조
 
@@ -32,7 +35,6 @@
 프로젝트 루트/
 ├─ Assets/
 │  ├─ GameData/                       (생성) 변환된 JSON — Addressables 대상
-│  ├─ GameDataSchema/                 (생성) _Schema.json — 에디터 전용
 │  ├─ Resources/                      창·컴포넌트 프리팹 (직접 생성)
 │  └─ Scripts/
 │     ├─ UIFramework/
@@ -47,20 +49,21 @@
 │     │  ├─ Containers/               표별 콘크리트 컨테이너 — 직접 작성
 │     │  ├─ Generated/                (생성) 데이터 클래스 + Containers.Generated.cs
 │     │  ├─ GameEnum.cs               (생성) _Enum 정의 기준 enum
-│     │  └─ Editor/                   DbGenerator · Live Data Editor
+│     │  └─ Editor/                   변환·생성 도구
+│     │     ├─ DataExportPipeline.cs  원본 → JSON
+│     │     ├─ DbGenerator.cs         C# 코드 생성
+│     │     ├─ SourceTableConverter.cs 자료형 해석 · 값 변환
+│     │     ├─ DataIssueLog.cs        에러/경고 수집
+│     │     └─ Sources/               확장자별 로더 (여기에 추가)
 │     ├─ Game/Core/                   GameRoot (컨테이너 접근 루트)
 │     └─ Utility/                     Game_Utility 확장 메서드
 │
-└─ _DataExporter/                     데이터 변환 도구
-   ├─ run_win.bat                     실행 진입점
-   ├─ smart_exporter.js               소스 로딩 · 파싱 → JSON + 스키마  (SOURCE_EXTENSIONS 여기)
-   ├─ enum_name.js                    enum 이름 정규화 규칙
+└─ _DataExporter/                     원본 데이터 (Assets 밖 — Unity 가 임포트하지 않는다)
    ├─ config.json                     경로(Paths) + 표/열 제외 규칙
-   ├─ GameData/                       원본 .xlsx · .js · .py
-   └─ DataExample/                    예제 원본 (xlsx + js)
+   └─ GameData/                       원본 .xlsx · .csv · .js · .ts · .py (예제 포함)
 ```
 
-`(생성)` 표시된 경로는 도구가 덮어쓴다. 직접 수정하지 않는다. `Assets/Resources/` 와 `Assets/GameData/` 는 저장소에 없다 — 앞은 직접 만들고, 뒤는 첫 변환 때 도구가 만든다.
+`(생성)` 표시된 경로는 도구가 덮어쓴다. 직접 수정하지 않는다. 저장소에는 원본도 생성물도 들어 있지 않다 — `_DataExporter/GameData/` 에 데이터를 넣고 **Ctrl+G** 를 누르면 나머지가 만들어진다. `Assets/Resources/` 는 UI 프리팹용이라 직접 만든다.
 
 | 네임스페이스 | 위치 | 파일 수 |
 |------------|------|--------|
@@ -73,119 +76,154 @@
 
 ## 데이터 파이프라인
 
-작업이 두 단계로 갈린다. **기획자는 JSON까지, 프로그래머가 C#을 만든다.**
+원본을 편집하는 쪽과 코드를 만드는 쪽이 갈린다. **기획자는 원본만, 커밋도 원본만.**
 
 ```
-_DataExporter/GameData/*.xlsx  *.js  *.py       기획자가 편집
+_DataExporter/GameData/*.xlsx  *.csv  *.js  *.ts  *.py     기획자가 편집
         │
-        │  run_win.bat                          기획자. Node 만 있으면 된다
+        │  Unity: Tools > GameData > Data Generate  (Ctrl+G)
         ▼
-Assets/GameData/*.json                          런타임 데이터
-Assets/GameData/_Enum.json                      enum 정의 (참고용)
-Assets/GameDataSchema/_Schema.json              표별 컬럼 · 자료형 + enum
-        │
-        │  Unity: Tools > GameData > DB Generate  (Ctrl+G)    프로그래머
-        ▼
-Assets/Scripts/DataLoader/Generated/*.cs                     데이터 클래스
-Assets/Scripts/DataLoader/Generated/Containers.Generated.cs  컨테이너 추상 부모
-Assets/Scripts/DataLoader/GameEnum.cs                        Game.GameEnum.XxxType
-Assets/Scripts/Game/Core/GameRoot.Generated.cs               컨테이너 접근 프로퍼티
+Assets/GameData/*.json                          런타임 데이터 (Addressables 대상)
+Assets/Scripts/DataLoader/Generated/*.cs        데이터 클래스
+Assets/Scripts/DataLoader/Generated/Containers.Generated.cs
+Assets/Scripts/DataLoader/GameEnum.cs
+Assets/Scripts/Game/Core/GameRoot.Generated.cs
 ```
 
-경로는 전부 `config.json` 의 `Paths` 에서 온다 (아래 [경로 설정](#경로-설정)).
+Ctrl+G 한 번이 두 단계를 모두 돈다. ① 원본을 읽어 JSON 을 쓰고, ② 같은 실행 안에서 그 결과로 C# 을 만든다. 내용이 같은 파일은 다시 쓰지 않으므로 반복 실행이 싸다.
 
-`run_win.bat` 은 C# 을 한 줄도 만들지 않는다. 기획자가 올리는 것은 원본 파일과 `Assets/GameData/`, `Assets/GameDataSchema/` 뿐이다.
+원본을 하나도 못 읽으면 **아무것도 건드리지 않고 에러만 남긴다.** 경로를 잘못 잡았을 때 생성 코드가 지워지는 것을 막는다.
 
-### 왜 스키마 파일이 따로 필요한가
+원본은 `Assets` 바깥에 둔다. 안에 두면 Unity 가 임포트하고 `.meta` 를 만들고 빌드 후보로 잡는데, 게임에 들어갈 파일이 아니다.
 
-JSON 에는 자료형이 남지 않는다. 값만 있으면 `stringArray` 인지 `intArray` 인지, `string` 인지 enum 인지, 필수(`!`) 인지 구분할 수 없다. 그래서 엑셀 2행의 자료형을 `_Schema.json` 으로 따로 내보내고, Unity 쪽 생성기가 그것만 읽는다.
+### 검증
 
-원본 dfw 는 이 역할을 `.graphql` 파일 257개가 맡는다. 서버와 계약을 공유해야 해서 손으로 관리하지만, 이 프레임워크는 서버가 없으므로 엑셀에서 자동 추출한다.
+두 단계가 같은 기록부를 쓴다. 어디서 깨졌든 콘솔 한 곳에 모인다.
 
-### DB Generate
+```
+[GameData] 원본 3개 → 표 2개 / 23행, enum 2개 · 코드 2개, 컨테이너 프로퍼티 0개
+에러 1건, 경고 2건
 
-Unity 메뉴 **Tools > GameData > DB Generate** 또는 **Ctrl+G**.
+[에러] HeroData.xlsx > HeroData [4행 Code] — 필수 열이 비어 있습니다. 자료형 'string!'
+[경고] HeroData.xlsx > HeroData [3행 Atk]  — 숫자로 바꿀 수 없습니다: 'xyz'
+```
 
-- `_Schema.json` 이 없으면 에러 로그를 남기고 아무것도 만들지 않는다. `run_win.bat` 을 먼저 돌린다.
-- 내용이 같은 파일은 다시 쓰지 않는다.
-- 스키마에서 사라진 표의 `Generated/*.cs` 는 지운다.
-- `Containers/` 를 스캔해 `GameRoot.Generated.cs` 를 갱신한다. 콘크리트 컨테이너를 추가·삭제한 뒤에도 다시 실행한다.
+행 번호는 원본에서 보이는 그 번호다. 자료형처럼 열 전체에 걸린 문제는 행마다가 아니라 **한 번만** 보고한다.
+
+문제가 있어도 나머지 표는 계속 변환한다. 한 파일이 깨졌다고 전체가 멈추면 작업이 막히기 때문이다.
+
+| 상황 | 처리 |
+|------|------|
+| 필수(`!`) 열이 빈 값 | 에러. 자료형 기본값을 넣는다 |
+| 자료형 변환 실패 | 경고. `null` 로 둔다 (필수면 기본값) |
+| 모르는 자료형 | 에러. `string` 으로 처리 |
+| 열 이름 중복 | 에러. 뒤쪽 열을 버린다 |
+| 표 이름 중복 | 에러. 뒤쪽 파일을 건너뛴다 |
+| 로더의 런타임 없음 | 경고. 그 확장자만 건너뛴다 |
+
+### 원본 포맷
+
+`Tools > GameData > Settings` 에서 지금 쓸 수 있는 포맷을 확인한다.
+
+| 확장자 | 로더 | 필요한 것 |
+|--------|------|----------|
+| `.xlsx` | `XlsxSourceLoader` | 없음 (ZIP + XML 직접 파싱) |
+| `.csv` | `CsvSourceLoader` | 없음 |
+| `.js` | `JsSourceLoader` | node |
+| `.ts` | `TsSourceLoader` | node + tsx |
+| `.py` | `PySourceLoader` | python 3 |
+
+런타임이 없는 포맷은 목록에 흐리게 뜨고 이유가 함께 표시된다. 그 확장자만 건너뛰고 나머지는 정상 변환된다.
 
 ### 경로 설정
 
-입력·출력 경로는 **`_DataExporter/config.json` 의 `Paths` 한 곳**에 있다. Node 익스포터와 Unity 의 DB Generate 가 같은 파일을 읽으므로 한 번만 고치면 양쪽에 반영된다.
+입력·출력 경로는 **`_DataExporter/config.json` 의 `Paths` 한 곳**에 있다. Unity 메뉴 **Tools > GameData > Settings** 에서 편집한다.
 
-Unity 메뉴 **Tools > GameData > Settings** 에서 편집한다.
-
-| 항목 | 쓰는 쪽 | 기본값 |
-|------|--------|--------|
-| `SourceFolder` | run_win.bat | `_DataExporter/GameData` |
-| `JsonOutput` | run_win.bat | `Assets/GameData` |
-| `SchemaOutput` | 양쪽 | `Assets/GameDataSchema/_Schema.json` |
-| `GeneratedFolder` | DB Generate | `Assets/Scripts/DataLoader/Generated` |
-| `ContainersFolder` | DB Generate | `Assets/Scripts/DataLoader/Containers` |
-| `GameEnumFile` | DB Generate | `Assets/Scripts/DataLoader/GameEnum.cs` |
-| `GameRootFile` | DB Generate | `Assets/Scripts/Game/Core/GameRoot.Generated.cs` |
+| 항목 | 쓰이는 단계 | 기본값 |
+|------|-----------|--------|
+| `SourceFolder` | ① 원본 읽기 | `_DataExporter/GameData` |
+| `JsonOutput` | ① JSON 쓰기 | `Assets/GameData` |
+| `GeneratedFolder` | ② 코드 쓰기 | `Assets/Scripts/DataLoader/Generated` |
+| `ContainersFolder` | ② 스캔 | `Assets/Scripts/DataLoader/Containers` |
+| `GameEnumFile` | ② | `Assets/Scripts/DataLoader/GameEnum.cs` |
+| `GameRootFile` | ② | `Assets/Scripts/Game/Core/GameRoot.Generated.cs` |
 
 상대 경로는 프로젝트 루트(`Assets` 의 부모) 기준이다. 절대 경로도 넣을 수 있다.
 
-설정 창은 저장 전에 몇 가지를 검사한다 — 원본 폴더가 없을 때, 스키마가 JSON 출력 폴더 안에 있을 때(빌드에 딸려간다), 코드 출력 폴더가 `Assets` 밖일 때(컴파일되지 않는다).
+설정 창은 저장 전에 검사한다 — 원본 폴더가 없을 때, 코드 출력 폴더가 `Assets` 밖일 때(컴파일되지 않는다).
 
-한 번만 다른 폴더로 돌리고 싶으면 config 를 건드리지 말고 CLI 를 쓴다.
+`Paths` 만 갈아끼우므로 `config.json` 의 다른 키(`ExcludeColumnPrefix` 등)는 건드리지 않는다.
 
-```bash
-node smart_exporter.js all --in DataExample
-```
+### 전체 흐름 한눈에
 
-### 예제
-
-`_DataExporter/DataExample/` 에 두 포맷의 예제가 있다.
-
-| 파일 | 보여주는 것 |
-|------|------------|
-| `HeroData.xlsx` | `int!` `string!` `float` `bool` `stringArray`, 한글 값 |
-| `LevelData.js` | 상수와 루프로 20행 생성 |
-
-```bash
-node smart_exporter.js all --in DataExample
-```
-
-로 변환한 뒤 Unity 에서 **Ctrl+G** 를 누르면 전체 흐름을 한 번에 볼 수 있다.
-
-### 원본 파일 — 위치와 확장자
-
-원본은 `Paths.SourceFolder`(기본 `_DataExporter/GameData/`) 에 넣는다. 하위 폴더는 스캔하지 않는다.
-
-| 확장자 | 용도 | 비고 |
-|--------|------|------|
-| `.xlsx` | 기획자 주력 | 시트 1장 = 표 1개 |
-| `.js` | 계산으로 생성하는 표 | 별도 설치 불필요 |
-| `.py` | 계산으로 생성하는 표 | 로컬 Python 필요 |
-
-읽을 확장자는 [smart_exporter.js](_DataExporter/smart_exporter.js) 최상단에서 켜고 끈다.
-
-```js
-// ─────────────────────────────────────────────────────────────────────────────
-// 이 부분에 Json 변환할 파일 확장자명 넣으세요.
-//
-// 넣을 수 있는 확장자 (아래 SOURCE_LOADERS에 로더가 있는 것만):
-//
-//   '.xlsx'   엑셀      시트 1장 = 표 1개
-//   '.js'     Node      module.exports = { 표이름: [[컬럼명..], [자료형..], [값..]] }
-//   '.py'     Python    TABLES      = { "표이름": [[컬럼명..], [자료형..], [값..]] }
-//                       ※ 로컬에 python 필요. 없으면 .py만 건너뛰고 나머지는 그대로 변환된다
-// ─────────────────────────────────────────────────────────────────────────────
-const SOURCE_EXTENSIONS = ['.xlsx', '.js', '.py'];
-```
-
-- 여기서 뺀 확장자는 `GameData/`에 파일이 있어도 **아예 읽지 않는다.** 예를 들어 `['.xlsx']`만 남기면 엑셀만 변환된다.
-- 이 배열은 **켜고 끄는 스위치**지 아무 확장자나 추가하는 곳이 아니다. 로더가 없는 확장자(예: `.csv`)를 적으면 시작할 때 경고하고 무시한다.
+원본 세 개를 넣고 **Ctrl+G** 를 눌렀을 때 실제로 나오는 모습이다.
 
 ```
-[WARN] SOURCE_EXTENSIONS에 로더가 없는 확장자가 있어 무시합니다: .csv (사용 가능: .xlsx, .js, .py)
+_DataExporter/GameData/
+├─ HeroData.xlsx        int! · string! · float · bool · stringArray, 한글 값
+├─ LevelData.js         상수와 루프로 20행 생성
+└─ _Enum.js             enum 정의 (객체 규약)
 ```
 
-- 새 포맷을 지원하려면 `SOURCE_LOADERS`에 한 줄 추가하고 로더 메서드를 만든다. → [확장자 추가하기](#코드-생성-진입점)
+```
+[GameData] 원본 3개 → 표 2개 / 23행, enum 2개 · 코드 2개, 컨테이너 프로퍼티 1개
+```
+
+```
+Assets/GameData/
+├─ HeroData.json                              3행
+└─ LevelData.json                             20행
+
+Assets/Scripts/DataLoader/
+├─ GameEnum.cs                                StatType · CurrencyType
+├─ Generated/
+│  ├─ HeroData.cs                             public float Atk / string[] Tags …
+│  ├─ LevelData.cs
+│  └─ Containers.Generated.cs                 표마다 추상 부모 (아래 참고)
+└─ Containers/
+   └─ HeroDataContainer.cs                    ← 직접 작성한 것
+
+Assets/Scripts/Game/Core/
+└─ GameRoot.Generated.cs                      Containers/ 를 스캔한 결과
+```
+
+`Containers.Generated.cs` 에는 표마다 갈래가 나온다. `HeroData` 는 `int` 키에 `Code` 열이 있어 셋이 다 나왔고, `LevelData` 는 `Code` 가 없어 둘만 나왔다.
+
+```csharp
+HeroDataDictionaryContainer        HeroDataDictionaryGroupContainer        HeroDataCodeContainer
+LevelDataDictionaryContainer       LevelDataDictionaryGroupContainer
+```
+
+`Containers/HeroDataContainer.cs` 를 직접 만들었기 때문에 `GameRoot` 에 프로퍼티가 하나 붙었다. 이 파일을 안 만들면 `HeroData` 는 JSON 이 있어도 로드되지 않는다.
+
+### 포맷 추가하기
+
+`Assets/Scripts/DataLoader/Editor/Sources/` 에 `IDataSourceLoader` 구현을 하나 넣으면 끝이다. 리플렉션으로 수집하므로 등록 코드를 고칠 필요가 없다.
+
+```csharp
+public sealed class TsvSourceLoader : IDataSourceLoader
+{
+    public string Extension => ".tsv";
+    public string DisplayName => "TSV";
+    public int Order => 16;
+
+    public bool IsAvailable(out string reason)
+    {
+        reason = null;
+        return true;
+    }
+
+    public IEnumerable<SourceTable> Load(string filePath, DataIssueLog log)
+    {
+        // 0행 컬럼명, 1행 자료형, 2행부터 데이터인 SourceTable 을 돌려준다.
+        // 문제는 예외로 던지지 말고 log 에 쌓는다.
+    }
+}
+```
+
+로더는 원본이 무엇이든 `SourceTable` 한 가지 형태로만 돌려주면 된다. 자료형 해석과 값 변환은 `SourceTableConverter` 가 전담하므로 포맷이 늘어도 규칙이 갈리지 않는다.
+
+구글 시트처럼 파일이 아닌 원본도 같은 자리에 붙는다.
 
 ### 표 규칙 — 확장자와 무관하게 동일
 
@@ -231,7 +269,7 @@ TABLES = {
 }
 ```
 
-셋 다 결과가 완전히 동일하다. 자료형 표기·키 규칙·`!` 필수 검사·`_` 접두사 제외가 전부 같게 적용된다.
+셋 다 결과가 완전히 동일하다. 자료형 표기·키 규칙·`!` 필수 검사·`#` 제외가 전부 같게 적용된다.
 
 코드 포맷의 쓸모는 **계산으로 표를 만들 수 있다**는 점이다. 밸런스 곡선을 상수로 관리하고 재실행하면 전체가 다시 생성된다.
 
@@ -246,7 +284,7 @@ for (let lv = 1; lv <= 100; lv++) {
 module.exports = { LevelData: rows };
 ```
 
-> `.js`는 `require()`로, `.py`는 서브프로세스로 **실제 실행된다.** 외부에서 받은 파일을 그대로 `GameData/`에 넣지 않는다.
+> `.js` · `.ts` · `.py` 는 그 언어 런타임으로 **실제 실행된다.** 외부에서 받은 파일을 그대로 `GameData/` 에 넣지 않는다.
 
 ### 표 작성 규칙
 
@@ -254,10 +292,10 @@ module.exports = { LevelData: rows };
 |------|------|
 | 키 | `Id`(`int!`, 1부터 순번)가 키다. 없으면 `Key` 열, 그것도 없으면 맨 왼쪽 열. `Id`와 `Key`를 같이 두지 않는다 |
 | 논리 식별자 | 세이브·로직이 참조하는 문자열은 `Code`(`string!`). 타 표 참조 열은 `~Code`/`~Codes` (`~Id`는 금지 — int로 오해된다) |
-| 필수 | 자료형 뒤 `!` (`int!`). 빈 값이면 에러 |
+| 필수 | 자료형 뒤에 `!` (`int!`). 빈 값이면 에러가 나고 기본값이 들어간다 |
 | 배열 | `intArray` · `floatArray` · `stringArray`, 셀은 쉼표 구분(`1,2,3`). 요소에 쉼표가 필요하면 배열 대신 1:N 표로 정규화 |
 | enum | 아래 `_Enum` 참고. 자료형 칸에 enum 이름만 적는다. `E` 접두사 금지, `~Type` 접미사 |
-| 제외 | `_`로 시작하는 표·열은 변환하지 않는다 (`_Enum` 파일은 예외) |
+| 제외 | 자료형 앞에 `#` 을 붙이면 그 열은 내보내지 않는다 (`#int`). 열 이름 앞에 붙여도(`#Memo`) 같다. 이름이 `_` 로 시작하는 열도 제외된다 |
 | 자료형 | `int` `long` `float` `double` `bool` `string` · `intArray` `floatArray` `stringArray` · enum 이름 |
 
 ### `_Enum` — enum 정의만 규약이 다르다
@@ -300,12 +338,15 @@ TABLES = {
 
 생성기는 추상 부모까지만 만든다. **실제로 쓸 표만** `Containers/`에 콘크리트로 선언한다. 선언하지 않은 표는 로드되지 않는다.
 
-```csharp
-using Game_DataLoader;
+**`Containers/` 는 생성 대상이 아니라 스캔 대상이다.** Ctrl+G 가 여기를 읽어 `GameRoot.Generated.cs` 를 만든다.
 
-public class ModeDataContainer       : ModeDataCodeContainer { }             // Code 조회 (int 키 + Code 열)
-public class StageThemeDataContainer : StageThemeDataDictionaryContainer { } // 1:1
-public class DropDataContainer       : DropDataDictionaryGroupContainer { }  // 1:N
+```csharp
+namespace Game_DataLoader
+{
+    public class HeroDataContainer  : HeroDataCodeContainer { }             // Code 조회 (int 키 + Code 열)
+    public class LevelDataContainer : LevelDataDictionaryContainer { }      // 1:1
+    public class DropDataContainer  : DropDataDictionaryGroupContainer { }  // 1:N
+}
 ```
 
 콘크리트를 추가·삭제한 뒤 **Ctrl+G**(DB Generate)를 다시 누르면 `GameRoot.Generated.cs`가 갱신된다. 데이터가 바뀌지 않았어도 된다.
@@ -313,9 +354,9 @@ public class DropDataContainer       : DropDataDictionaryGroupContainer { }  // 
 ```csharp
 await DataManager.Instance.InitializeAsync();                     // 시작 시 1회
 
-var mode  = GameRoot.Instance.ModeDataContainer.Get("normal");    // Code 단건
-var theme = GameRoot.Instance.StageThemeDataContainer.Get(1);     // int 키
-var all   = GameRoot.Instance.ModeDataContainer.AllValues;
+var knight = GameRoot.Instance.HeroDataContainer.Get("knight");   // Code 단건
+var hero   = GameRoot.Instance.HeroDataContainer.Get(1);          // int 키
+var all    = GameRoot.Instance.HeroDataContainer.AllValues;
 ```
 
 - 컨테이너를 만든 표만 로드된다. 안 만든 표는 메모리를 쓰지 않는다.
@@ -384,13 +425,21 @@ LoadJson(text)
 
 ### Addressables 설정
 
-`DataManager`는 라벨 `game_data`가 붙은 TextAsset을 전부 로드한다. **변환 도구는 라벨을 붙이지 않는다 — 최초 1회 수동 설정이 필요하다.**
+`DataManager` 는 라벨 `game_data` 가 붙은 TextAsset 을 전부 로드한다. 최초 1회만 해두면 된다.
 
-1. Window > Asset Management > Addressables > Groups
-2. `Assets/GameData` 폴더를 그룹 창에 드래그 → 폴더 통째로 엔트리가 된다
-3. 해당 엔트리에 `game_data` 라벨을 부여한다
+**Tools > GameData > Setup Addressables** 를 누르면 끝난다. 그룹 `GameData` 를 만들고 JSON 폴더를 통째로 엔트리로 등록한 뒤 라벨을 붙인다. Addressables 설정 자체가 없으면 그것부터 만든다.
 
-이후 추가되는 JSON은 폴더 엔트리에 자동 포함된다. 설정이 없으면 `DataManager`가 콘솔에 안내를 출력하고 빈 상태로 진행한다(예외를 던지지 않는다).
+폴더째 등록하므로 표가 늘어도 다시 할 일이 없다.
+
+등록이 안 된 상태로 Ctrl+G 를 누르면 경고가 뜬다.
+
+```
+[경고] 'Assets/GameData' 이 Addressables 라벨 'game_data' 로 등록되지 않았습니다.
+       Tools > GameData > Setup Addressables 를 한 번 실행하세요.
+       안 하면 런타임에 데이터가 비어 있습니다.
+```
+
+그래도 로드 시점에 죽지는 않는다. `DataManager` 가 콘솔에 안내를 남기고 빈 상태로 넘어간다.
 
 ### Live Data Editor
 
@@ -574,62 +623,42 @@ Auto.Release(comp)
 
 ## 코드 생성 진입점
 
-산출물을 고칠 일이 있으면 아래를 본다. **C# 을 찍는 건 전부 `DbGenerator.cs` 다.** `smart_exporter.js` 는 원본을 읽어 JSON 과 스키마까지만 만든다.
+산출물을 고칠 일이 있으면 아래를 본다. 전부 `Assets/Scripts/DataLoader/Editor/` 에 있다.
 
-### Unity — C# 생성
+### ① 원본 → JSON
 
-| 산출물 / 단계 | 함수 |
-|--------------|------|
-| 진입점 (`Ctrl+G`) | `Generate()` |
-| `<표>.cs` (데이터 클래스) | `WriteDataClasses()` |
-| `Containers.Generated.cs` | `WriteContainers()` / `AppendCodeContainer()` |
-| `GameEnum.cs` | `WriteGameEnum()` |
-| `GameRoot.Generated.cs` | `WriteGameRoot()` / `CollectConcreteContainers()` |
-| 자료형 → C# 타입 매핑 | `CsType()` |
-| 키 열 판정 (`Id` → `Key` → 첫 열) | `FindKeyColumn()` |
-| 스키마 읽기 | `ReadTables()` / `ReadEnums()` |
+| 단계 | 파일 | 함수 |
+|------|------|------|
+| 진입점 (`Ctrl+G` 의 앞단) | `DataExportPipeline.cs` | `Run()` — 변환 결과를 그대로 ② 에 넘긴다 |
+| 확장자별 로더 수집 | `Sources/DataSourceRegistry.cs` | `All` / `Find()` |
+| 로더 계약 | `Sources/IDataSourceLoader.cs` | `SourceTable` |
+| xlsx 파싱 | `Sources/XlsxSourceLoader.cs` | `ReadSheet()` / `ReadCell()` |
+| csv 파싱 | `Sources/CsvSourceLoader.cs` | `Parse()` |
+| js · ts · py 실행 | `Sources/JsSourceLoader.cs` 외 | `ExternalRuntime.Run()` |
+| 스크립트 결과 해석 | `Sources/ScriptTableReader.cs` | `FromJson()` |
+| 자료형 해석 · 값 변환 | `SourceTableConverter.cs` | `ParseColumns()` / `ConvertCell()` |
+| enum 수집 | `EnumCollector.cs` | `Collect()` |
 
-경로는 전부 `DbGenerator` 상단 상수다 (`SchemaPath` · `GeneratedFolder` · `GameEnumPath` · `GameRootPath`).
+### ② 변환 결과 → C#
 
-### Node — JSON · 스키마 생성
+| 산출물 | 파일 | 함수 |
+|--------|------|------|
+| 진입점 (`Ctrl+G`) | `DbGenerator.cs` | `Generate()` / `GenerateCode()` |
+| `<표>.cs` (데이터 클래스) | `DbGenerator.cs` | `WriteDataClasses()` |
+| `Containers.Generated.cs` | `DbGenerator.cs` | `WriteContainers()` / `AppendCodeContainer()` |
+| `GameEnum.cs` | `DbGenerator.cs` | `WriteGameEnum()` |
+| `GameRoot.Generated.cs` | `DbGenerator.cs` | `WriteGameRoot()` |
+| 자료형 → C# 타입 매핑 | `DbGenerator.cs` | `CsType()` |
+| 키 열 판정 (`Id` → `Key` → 첫 열) | `DbGenerator.cs` | `FindKeyColumn()` |
 
-| 단계 | 함수 |
+### 공통
+
+| 역할 | 파일 |
 |------|------|
-| 셀 → JSON 값 변환 | `convertValue()` |
-| 표 파싱 · 스키마 수집 | `processSheetRows()` |
-| JSON 쓰기 | `createJsonFiles()` |
-| `_Schema.json` 쓰기 | `writeSchema()` |
-| enum 정의 수집 | `loadEnumDefinitions()` |
+| 에러·경고 수집과 리포트 | `DataIssueLog.cs` |
+| 경로 설정 읽기·쓰기 | `DataPipelineConfig.cs` |
+| 설정 창 | `DataPipelineSettingsWindow.cs` |
 
-**확장자를 추가하려면** 로더를 만들고 `SOURCE_LOADERS` 에 한 줄, `SOURCE_EXTENSIONS` 에 한 줄 넣는다. 모든 로더는 `{ sheets: [{ name, rows }] }` 한 가지 형태를 반환하고, 그 아래 파이프라인은 원본이 무엇이었는지 알지 못한다.
+두 단계 모두 내용이 같은 파일은 다시 쓰지 않는다 (Unity 재임포트 방지). 자료형 해석은 `SourceTableConverter` 한 곳에만 있으므로, 포맷을 추가해도 규칙이 갈리지 않는다.
 
-```js
-const SOURCE_LOADERS = {
-    '.xlsx': 'loadXlsxWorkbook',
-    '.js': 'loadJsWorkbook',
-    '.py': 'loadPyWorkbook'
-};
-```
-
-| 단계 | 함수 |
-|------|------|
-| 확장자 검증 (로더 없는 것 걸러냄) | `resolveActiveExtensions()` |
-| 확장자별 분기 | `loadWorkbook()` |
-| xlsx / js / py 로더 | `loadXlsxWorkbook()` · `loadJsWorkbook()` · `loadPyWorkbook()` |
-| 표 형태 정규화 (`_Enum` 객체 → 행렬 포함) | `normalizeTableMap()` / `tableToRows()` |
-
-enum 이름 정규화(`E` 접두사 제거 · `Type` 접미사)는 `enum_name.js` 의 `normalizeEnumName()` 한 곳에 있다. `DbGenerator` 는 이미 정규화된 이름을 스키마로 받으므로 같은 규칙을 다시 구현하지 않는다.
-
-양쪽 모두 내용이 같은 파일은 다시 쓰지 않는다 (Unity 재임포트 방지).
-
-### CLI
-
-```bash
-node smart_exporter.js all        # 전체 (run_win.bat 기본값)
-node smart_exporter.js modified   # 변경된 파일만 (mtime 비교)
-node smart_exporter.js file HeroData.xlsx LevelData.js ShopData.py
-```
-
-C# 은 만들지 않는다. 변환 후 Unity 에서 **Ctrl+G**(DB Generate)를 눌러야 코드가 갱신된다.
-
-`--verbose` 로 상세 로그. 경로는 `config.json` 의 `Paths` 가 기본이고, `--in` / `--out` 또는 `GAMEDATA_PATH` · `JSON_OUTPUT_PATH` · `SCHEMA_OUTPUT_PATH` 환경변수가 그보다 우선한다.
+① 과 ② 는 한 실행 안에서 이어지므로 중간 파일을 거치지 않는다. `ConvertedTable` 이 그대로 넘어간다.

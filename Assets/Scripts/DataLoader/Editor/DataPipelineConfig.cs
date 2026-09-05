@@ -10,7 +10,6 @@ namespace Game_DataLoader
     {
         public string SourceFolder = "_DataExporter/GameData";
         public string JsonOutput = "Assets/GameData";
-        public string SchemaOutput = "Assets/GameDataSchema/_Schema.json";
         public string GeneratedFolder = "Assets/Scripts/DataLoader/Generated";
         public string ContainersFolder = "Assets/Scripts/DataLoader/Containers";
         public string GameEnumFile = "Assets/Scripts/DataLoader/GameEnum.cs";
@@ -22,7 +21,6 @@ namespace Game_DataLoader
             {
                 SourceFolder = SourceFolder,
                 JsonOutput = JsonOutput,
-                SchemaOutput = SchemaOutput,
                 GeneratedFolder = GeneratedFolder,
                 ContainersFolder = ContainersFolder,
                 GameEnumFile = GameEnumFile,
@@ -33,7 +31,7 @@ namespace Game_DataLoader
 
     /// <summary>
     /// _DataExporter/config.json 의 "Paths" 를 읽고 쓴다.
-    /// Node 익스포터와 Unity 생성기가 같은 파일을 보므로 경로가 한 곳에만 존재한다.
+    /// Data Generate(Ctrl+G) 가 이 경로대로 읽고 쓴다.
     /// 상대 경로는 프로젝트 루트(Assets 의 부모) 기준이다.
     /// </summary>
     public static class DataPipelineConfig
@@ -100,7 +98,6 @@ namespace Game_DataLoader
 
                 paths.SourceFolder = Read(section, "SourceFolder", paths.SourceFolder);
                 paths.JsonOutput = Read(section, "JsonOutput", paths.JsonOutput);
-                paths.SchemaOutput = Read(section, "SchemaOutput", paths.SchemaOutput);
                 paths.GeneratedFolder = Read(section, "GeneratedFolder", paths.GeneratedFolder);
                 paths.ContainersFolder = Read(section, "ContainersFolder", paths.ContainersFolder);
                 paths.GameEnumFile = Read(section, "GameEnumFile", paths.GameEnumFile);
@@ -136,7 +133,6 @@ namespace Game_DataLoader
             {
                 ["SourceFolder"] = Normalize(paths.SourceFolder),
                 ["JsonOutput"] = Normalize(paths.JsonOutput),
-                ["SchemaOutput"] = Normalize(paths.SchemaOutput),
                 ["GeneratedFolder"] = Normalize(paths.GeneratedFolder),
                 ["ContainersFolder"] = Normalize(paths.ContainersFolder),
                 ["GameEnumFile"] = Normalize(paths.GameEnumFile),
