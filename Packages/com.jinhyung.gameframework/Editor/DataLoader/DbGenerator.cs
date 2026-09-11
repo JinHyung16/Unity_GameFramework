@@ -336,7 +336,7 @@ namespace Game_DataLoader
 
             var sb = new StringBuilder();
             sb.Append(AutoHeader);
-            sb.AppendLine("// 콘크리트 컨테이너(DataLoader/Containers) 추가·삭제 후 다시 실행하면 갱신된다.");
+            sb.AppendLine($"// 콘크리트 컨테이너({paths.ContainersFolder}) 추가·삭제 후 다시 실행하면 갱신된다.");
             sb.AppendLine();
             sb.AppendLine("using " + Namespace + ";");
             sb.AppendLine();
@@ -344,6 +344,27 @@ namespace Game_DataLoader
             sb.AppendLine("{");
             sb.AppendLine("    public partial class GameRoot");
             sb.AppendLine("    {");
+            sb.AppendLine("        public static GameRoot Instance");
+            sb.AppendLine("        {");
+            sb.AppendLine("            get");
+            sb.AppendLine("            {");
+            sb.AppendLine("                if (_instance == null)");
+            sb.AppendLine("                {");
+            sb.AppendLine("                    _instance = new GameRoot();");
+            sb.AppendLine("                }");
+            sb.AppendLine("                return _instance;");
+            sb.AppendLine("            }");
+            sb.AppendLine("        }");
+            sb.AppendLine();
+            sb.AppendLine("        private static GameRoot _instance;");
+            sb.AppendLine();
+            sb.AppendLine("        private GameRoot()");
+            sb.AppendLine("        {");
+            sb.AppendLine("        }");
+            if (names.Count > 0)
+            {
+                sb.AppendLine();
+            }
             foreach (string name in names)
             {
                 sb.AppendLine($"        public {name} {name} => DataManager.Instance.GetContainer<{name}>();");

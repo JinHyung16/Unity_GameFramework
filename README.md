@@ -1,6 +1,6 @@
 # GameFramework
 
-새 Unity 프로젝트에 그대로 얹어 쓰는 공용 코드. 두 축으로 구성된다.
+새 Unity 프로젝트에 UPM 패키지로 설치해 쓰는 공용 코드. 두 축으로 구성된다.
 
 | 모듈 | 역할 |
 |------|------|
@@ -11,7 +11,7 @@
 
 | 항목 | 용도 |
 |------|------|
-| Unity **2022.2+** | `FindAnyObjectByType`, C# 9 `new()` |
+| Unity **6000.3+** | 패키지 최소 버전 (`package.json` 의 `unity`). 의존하는 `com.unity.ugui 2.0.0` 이 Unity 6 전용이다 |
 | `com.unity.ugui` | `UnityEngine.UI` — `BaseWindow` · `BaseComponent` · `RecyclableScrollView`. Unity 6 에서는 TextMeshPro 도 여기 포함된다 |
 | `com.unity.nuget.newtonsoft-json` | JSON 역직렬화 |
 | `com.unity.addressables` | `DataManager` 의 JSON 로드 |
@@ -21,56 +21,106 @@
 
 `.xlsx` 와 `.csv` 는 외부 런타임 없이 읽는다. 선택 항목이 없으면 그 확장자만 건너뛰고 나머지는 정상 변환된다.
 
+Unity 패키지 세 개는 `package.json` 의 `dependencies` 라서 설치할 때 함께 들어온다.
+
 동작을 확인한 조합은 Unity `6000.3.13f1` · ugui `2.0.0` · newtonsoft-json `3.2.1` · addressables `2.3.16` 이다.
 
 ## Install
 
-1. `Assets/` 내용을 프로젝트 `Assets/`에 복사한다.
-2. `_DataExporter/`는 프로젝트 루트(`Assets` 바깥)에 둔다 — 원본 데이터 폴더다.
-3. **Tools > GameData > Setup Addressables** 를 한 번 실행한다. 안 하면 런타임에 데이터가 비어 있다.
+Package Manager → **+** → **Add package from git URL**
+
+```
+https://github.com/JinHyung16/Unity_GameFramework.git?path=/Packages/com.jinhyung.gameframework#v0.1.0
+```
+
+`Packages/manifest.json` 에 직접 넣어도 된다.
+
+```json
+"com.jinhyung.gameframework": "https://github.com/JinHyung16/Unity_GameFramework.git?path=/Packages/com.jinhyung.gameframework#v0.1.0"
+```
+
+| URL 부분 | 뜻 |
+|---------|-----|
+| `?path=` | 저장소가 Unity 프로젝트 전체라서 그 안의 패키지 폴더를 가리킨다 |
+| `#v0.1.0` | 태그 고정. 빼면 기본 브랜치의 그 시점 커밋이 `packages-lock.json` 에 박혀 이후 갱신이 자동으로 되지 않는다 |
+
+private 저장소면 받는 PC 에 GitHub 인증이 있어야 한다. SSH 로는 `git@github.com:JinHyung16/Unity_GameFramework.git?path=...#v0.1.0` 형태다.
+
+설치한 뒤 프로젝트에서 할 일:
+
+1. 프로젝트 루트(`Assets` 바깥)에 `_DataExporter/GameData/` 를 만들고 원본을 넣는다.
+2. **Tools > GameData > Setup Addressables** 를 한 번 실행한다. 안 하면 런타임에 데이터가 비어 있다.
+3. 창·컴포넌트 프리팹은 `Assets/Resources/` 아래에 둔다.
+
+`_DataExporter/config.json` 은 없어도 된다. 없으면 기본 경로로 동작하고, **Tools > GameData > Settings** 에서 저장하면 만들어진다.
+
+예제: Package Manager 에서 이 패키지 → **Samples** → **UI Example** → **Import**.
 
 ## 디렉터리 구조
+
+### 패키지
+
+```
+Packages/com.jinhyung.gameframework/
+├─ package.json
+├─ Runtime/                            Jinhyung.GameFramework.asmdef
+│  ├─ UIFramework/
+│  │  ├─ BaseComponent.cs              모든 UI 조각의 부모 (Transform 캐싱)
+│  │  ├─ Window/                       BaseWindow · WindowManagement · BaseManagement · WindowKey
+│  │  ├─ Prefab/                       PrefabAuto · PrefabLoader · PrefabPoolCore · IPoolable
+│  │  └─ Scroll/                       RecyclableScrollView
+│  ├─ DataLoader/
+│  │  ├─ DataManager.cs                JSON 일괄 로드 → 컨테이너 주입
+│  │  └─ Base/                         컨테이너 부모
+│  └─ Utility/                         Game_Utility 확장 메서드
+├─ Editor/                             Jinhyung.GameFramework.Editor.asmdef (에디터 전용)
+│  ├─ DataLoader/                      변환·생성 도구
+│  │  ├─ DataExportPipeline.cs         원본 → JSON
+│  │  ├─ DbGenerator.cs                C# 코드 생성
+│  │  ├─ SourceTableConverter.cs       자료형 해석 · 값 변환
+│  │  ├─ DataIssueLog.cs               에러/경고 수집
+│  │  └─ Sources/                      확장자별 로더
+│  └─ UIFramework/Scroll/              RecyclableScrollView 인스펙터
+└─ Samples~/UIExample/                 Package Manager 에서 Import 하는 예제
+```
+
+Git 으로 설치한 패키지는 `Library/PackageCache` 에 **읽기 전용**으로 풀린다. 도구는 패키지 안에 아무것도 쓰지 않는다. 모든 출력은 사용하는 프로젝트의 `Assets/` 로 간다.
+
+### 사용하는 프로젝트
 
 ```
 프로젝트 루트/
 ├─ Assets/
-│  ├─ GameData/                       (생성) 변환된 JSON — Addressables 대상
-│  ├─ Resources/                      창·컴포넌트 프리팹 (직접 생성)
-│  └─ Scripts/
-│     ├─ UIFramework/
-│     │  ├─ BaseComponent.cs          모든 UI 조각의 부모 (Transform 캐싱)
-│     │  ├─ Window/                   BaseWindow · WindowManagement · BaseManagement · WindowKey
-│     │  ├─ Prefab/                   PrefabAuto · PrefabLoader · IPoolable
-│     │  ├─ Scroll/                   RecyclableScrollView
-│     │  └─ Examples/                 사용 예시
-│     ├─ DataLoader/
-│     │  ├─ DataManager.cs            JSON 일괄 로드 → 컨테이너 주입
-│     │  ├─ Base/                     컨테이너 부모 — 수정 금지
-│     │  ├─ Containers/               표별 콘크리트 컨테이너 — 직접 작성
-│     │  ├─ Generated/                (생성) 데이터 클래스 + Containers.Generated.cs
-│     │  ├─ GameEnum.cs               (생성) _Enum 정의 기준 enum
-│     │  └─ Editor/                   변환·생성 도구
-│     │     ├─ DataExportPipeline.cs  원본 → JSON
-│     │     ├─ DbGenerator.cs         C# 코드 생성
-│     │     ├─ SourceTableConverter.cs 자료형 해석 · 값 변환
-│     │     ├─ DataIssueLog.cs        에러/경고 수집
-│     │     └─ Sources/               확장자별 로더 (여기에 추가)
-│     ├─ Game/Core/                   GameRoot (컨테이너 접근 루트)
-│     └─ Utility/                     Game_Utility 확장 메서드
+│  ├─ GameData/                        (생성) 변환된 JSON — Addressables 대상
+│  ├─ Resources/                       창·컴포넌트 프리팹 (직접 생성)
+│  └─ Scripts/GameData/
+│     ├─ Containers/                   표별 콘크리트 컨테이너 — 직접 작성
+│     ├─ Generated/                    (생성) 데이터 클래스 + Containers.Generated.cs
+│     ├─ GameEnum.cs                   (생성) _Enum 정의 기준 enum
+│     └─ GameRoot.Generated.cs         (생성) 컨테이너 접근 루트
 │
-└─ _DataExporter/                     원본 데이터 (Assets 밖 — Unity 가 임포트하지 않는다)
-   ├─ config.json                     경로(Paths) + 표/열 제외 규칙
-   └─ GameData/                       원본 .xlsx · .csv · .js · .ts · .py (예제 포함)
+└─ _DataExporter/                      원본 데이터 (Assets 밖 — Unity 가 임포트하지 않는다)
+   ├─ config.json                      경로(Paths) + 표/열 제외 규칙. 없으면 기본값
+   └─ GameData/                        원본 .xlsx · .csv · .js · .ts · .py
 ```
 
-`(생성)` 표시된 경로는 도구가 덮어쓴다. 직접 수정하지 않는다. 저장소에는 원본도 생성물도 들어 있지 않다 — `_DataExporter/GameData/` 에 데이터를 넣고 **Ctrl+G** 를 누르면 나머지가 만들어진다. `Assets/Resources/` 는 UI 프리팹용이라 직접 만든다.
+`(생성)` 표시된 경로는 도구가 덮어쓴다. 직접 수정하지 않는다. `_DataExporter/GameData/` 에 데이터를 넣고 **Ctrl+G** 를 누르면 나머지가 만들어진다.
+
+이 저장소 자체는 패키지를 개발하는 Unity 프로젝트다. 패키지가 `Packages/` 아래 있어서 임베디드 패키지로 잡히고, 여기서는 바로 수정할 수 있다. 저장소에는 원본도 생성물도 들어 있지 않다.
 
 | 네임스페이스 | 위치 | 파일 수 |
 |------------|------|--------|
-| `Game_DataLoader` | `DataLoader/` — 생성되는 데이터 클래스와 컨테이너도 여기에 속한다 | 10 |
-| `Game_UIFramework` | `UIFramework/` | 29 |
-| `Game_Core` | `Game/Core/` — `GameRoot` | 1 |
-| `Game_Utility` | `Utility/` | 1 |
+| `Game_DataLoader` | 패키지 `Runtime/DataLoader/` · `Editor/DataLoader/`. 생성되는 데이터 클래스와 컨테이너도 여기에 속한다 | 9 · 18 |
+| `Game_UIFramework` | 패키지 `Runtime/UIFramework/` · `Editor/UIFramework/` | 26 · 1 |
+| `Game_Utility` | 패키지 `Runtime/Utility/` | 1 |
+| `Game_Core` | 사용하는 프로젝트 — 생성되는 `GameRoot` | 생성 |
+
+| 어셈블리 | 포함 | 참조 |
+|---------|------|------|
+| `Jinhyung.GameFramework` | `Runtime/` | Addressables · ResourceManager · UnityEngine.UI |
+| `Jinhyung.GameFramework.Editor` | `Editor/` (에디터 전용) | 위 셋 + 런타임 어셈블리 · Addressables.Editor · UnityEditor.UI |
+
+둘 다 `autoReferenced` 라서 사용하는 프로젝트의 `Assembly-CSharp` 가 따로 설정하지 않아도 참조한다. 생성 코드가 패키지의 `DictionaryContainer` 등을 상속할 수 있는 이유다. Newtonsoft 는 자동 참조 DLL 이라 목록에 없다.
 
 ---
 
@@ -84,10 +134,10 @@ _DataExporter/GameData/*.xlsx  *.csv  *.js  *.ts  *.py     기획자가 편집
         │  Unity: Tools > GameData > Data Generate  (Ctrl+G)
         ▼
 Assets/GameData/*.json                          런타임 데이터 (Addressables 대상)
-Assets/Scripts/DataLoader/Generated/*.cs        데이터 클래스
-Assets/Scripts/DataLoader/Generated/Containers.Generated.cs
-Assets/Scripts/DataLoader/GameEnum.cs
-Assets/Scripts/Game/Core/GameRoot.Generated.cs
+Assets/Scripts/GameData/Generated/*.cs          데이터 클래스
+Assets/Scripts/GameData/Generated/Containers.Generated.cs
+Assets/Scripts/GameData/GameEnum.cs
+Assets/Scripts/GameData/GameRoot.Generated.cs
 ```
 
 Ctrl+G 한 번이 두 단계를 모두 돈다. ① 원본을 읽어 JSON 을 쓰고, ② 같은 실행 안에서 그 결과로 C# 을 만든다. 내용이 같은 파일은 다시 쓰지 않으므로 반복 실행이 싸다.
@@ -143,12 +193,12 @@ Ctrl+G 한 번이 두 단계를 모두 돈다. ① 원본을 읽어 JSON 을 쓰
 |------|-----------|--------|
 | `SourceFolder` | ① 원본 읽기 | `_DataExporter/GameData` |
 | `JsonOutput` | ① JSON 쓰기 | `Assets/GameData` |
-| `GeneratedFolder` | ② 코드 쓰기 | `Assets/Scripts/DataLoader/Generated` |
-| `ContainersFolder` | ② 스캔 | `Assets/Scripts/DataLoader/Containers` |
-| `GameEnumFile` | ② | `Assets/Scripts/DataLoader/GameEnum.cs` |
-| `GameRootFile` | ② | `Assets/Scripts/Game/Core/GameRoot.Generated.cs` |
+| `GeneratedFolder` | ② 코드 쓰기 | `Assets/Scripts/GameData/Generated` |
+| `ContainersFolder` | ② 스캔 | `Assets/Scripts/GameData/Containers` |
+| `GameEnumFile` | ② | `Assets/Scripts/GameData/GameEnum.cs` |
+| `GameRootFile` | ② | `Assets/Scripts/GameData/GameRoot.Generated.cs` |
 
-상대 경로는 프로젝트 루트(`Assets` 의 부모) 기준이다. 절대 경로도 넣을 수 있다.
+상대 경로는 프로젝트 루트(`Assets` 의 부모) 기준이다. 절대 경로도 넣을 수 있다. `config.json` 이 없으면 위 기본값을 쓴다.
 
 설정 창은 저장 전에 검사한다 — 원본 폴더가 없을 때, 코드 출력 폴더가 `Assets` 밖일 때(컴파일되지 않는다).
 
@@ -174,17 +224,15 @@ Assets/GameData/
 ├─ HeroData.json                              3행
 └─ LevelData.json                             20행
 
-Assets/Scripts/DataLoader/
+Assets/Scripts/GameData/
 ├─ GameEnum.cs                                StatType · CurrencyType
+├─ GameRoot.Generated.cs                      Containers/ 를 스캔한 결과
 ├─ Generated/
 │  ├─ HeroData.cs                             public float Atk / string[] Tags …
 │  ├─ LevelData.cs
 │  └─ Containers.Generated.cs                 표마다 추상 부모 (아래 참고)
 └─ Containers/
    └─ HeroDataContainer.cs                    ← 직접 작성한 것
-
-Assets/Scripts/Game/Core/
-└─ GameRoot.Generated.cs                      Containers/ 를 스캔한 결과
 ```
 
 `Containers.Generated.cs` 에는 표마다 갈래가 나온다. `HeroData` 는 `int` 키에 `Code` 열이 있어 셋이 다 나왔고, `LevelData` 는 `Code` 가 없어 둘만 나왔다.
@@ -198,9 +246,12 @@ LevelDataDictionaryContainer       LevelDataDictionaryGroupContainer
 
 ### 포맷 추가하기
 
-`Assets/Scripts/DataLoader/Editor/Sources/` 에 `IDataSourceLoader` 구현을 하나 넣으면 끝이다. 리플렉션으로 수집하므로 등록 코드를 고칠 필요가 없다.
+사용하는 프로젝트의 `Editor` 폴더 어디든 `IDataSourceLoader` 구현을 하나 넣으면 끝이다. 로드된 어셈블리를 전부 리플렉션으로 훑으므로 패키지를 고칠 필요도, 등록 코드도 없다.
 
 ```csharp
+using System.Collections.Generic;
+using Game_DataLoader;
+
 public sealed class TsvSourceLoader : IDataSourceLoader
 {
     public string Extension => ".tsv";
@@ -223,7 +274,7 @@ public sealed class TsvSourceLoader : IDataSourceLoader
 
 로더는 원본이 무엇이든 `SourceTable` 한 가지 형태로만 돌려주면 된다. 자료형 해석과 값 변환은 `SourceTableConverter` 가 전담하므로 포맷이 늘어도 규칙이 갈리지 않는다.
 
-구글 시트처럼 파일이 아닌 원본도 같은 자리에 붙는다.
+구글 시트처럼 파일이 아닌 원본도 같은 방식으로 붙는다.
 
 ### 표 규칙 — 확장자와 무관하게 동일
 
@@ -420,7 +471,7 @@ LoadJson(text)
 | `IData` | 데이터 행 마커 인터페이스 |
 | `IDataKey<T>` | 행이 자기 키를 노출하는 계약. 생성 코드가 `Key` 를 구현한다 |
 | `JsonSettings` | Newtonsoft 공용 설정. null 값과 모르는 컬럼을 무시한다 |
-| `GameRoot` | 컨테이너 접근 루트. `partial` 이고 프로퍼티는 생성 코드가 채운다 |
+| `GameRoot` | 컨테이너 접근 루트. 싱글턴과 프로퍼티를 생성 코드가 통째로 만든다. 사용하는 프로젝트 쪽에 생기므로 `partial` 로 확장할 수 있다 |
 | `LiveDataEditorWindow` | 에디터 도구. JSON 표를 보고 수정한다 |
 
 ### Addressables 설정
@@ -610,26 +661,34 @@ ItemComponent.Auto.Release(comp);
 ```
 Auto.Create(parent) / CreateForUI(parent)
   PrefabLoader.Get<T>(path)              IsGlobal 이면 GetGlobal
-    풀의 스택에 있으면   pop → _activePaths 등록 → IPoolable.OnSpawn()
+    풀의 스택에 있으면   pop → _active 등록 → IPoolable.OnSpawn()
     없으면              Resources.Load → Instantiate → 등록 → OnSpawn()
   부모 지정 → 좌표 리셋 → SetActive
 
 Auto.Release(comp)
   PrefabLoader.Release                   Global → Scene 순으로 소속 풀을 찾는다
-    소속 풀이면   _activePaths 제거 → OnDespawn() → SetActive(false)
+    소속 풀이면   _active 제거 → OnDespawn() → SetActive(false)
                   → 풀 루트로 이동 → 스택 push
     아니면        경고 후 Destroy
 ```
 
 `Preload(count)` 는 인스턴스를 만들어 스택에 바로 쌓는다. 꺼낸 적이 없으므로 `OnSpawn` / `OnDespawn` 을 호출하지 않는다.
 
+`_active` 는 `InstanceID → (컴포넌트, 경로)` 장부다. `Release` 가 컴포넌트만 받으므로 어느 스택으로 돌려보낼지 여기서 찾는다. `Release` 없이 `Destroy` 된 인스턴스는 장부에 흔적이 남는데, 아래 시점에 걷어낸다.
+
+| 시점 | 동작 |
+|------|------|
+| 씬이 내려갈 때 (`sceneUnloaded`) | `GlobalPrefabPool` 이 `PruneDestroyed()` — 파괴된 항목만 지우고 풀의 인스턴스는 둔다 |
+| `ScenePrefabPool` · `GlobalPrefabPool` 이 파괴될 때 | `Clear()` — 쉬던 인스턴스를 파괴하고 장부를 전부 버린다 |
+| 직접 호출 | `PrefabLoader.PruneDestroyed()` · `PrefabLoader.ClearScenePool()` |
+
+씬 풀은 씬과 함께 사라지므로, 누적이 문제 되는 쪽은 `DontDestroyOnLoad` 인 글로벌 풀이다. 씬을 겹쳐 쓰거나 직접 `Destroy` 한 뒤에는 직접 불러도 된다.
+
 ### RecyclableScrollView
 
 `ScrollRect` 파생. 화면에 보이는 셀만 만들어 재활용한다. `IRecyclableScrollDataSource`를 구현해 연결하고, 셀은 `IRecyclableItem`을 구현한다.
 
 `CellSizeMode`: `Static`(고정 크기) · `Free`(프리팹 크기 측정) · `PerItem`(항목별 가변 — `IRecyclableVariableSize` 추가 구현).
-
-> `Prefab/`의 `PrefabAuto`는 `Utility/TransformExtensions.cs`(`Game_Utility`)에 의존한다. 같이 복사한다.
 
 ---
 
@@ -655,9 +714,9 @@ Auto.Release(comp)
 | `MonoSingleton<T>` | `DontDestroyOnLoad` 싱글턴. 종료 중에는 새로 만들지 않는다 |
 | `MonoSceneSingleton<T>` | 씬 단위 싱글턴. 씬을 다시 열면 재생성된다 |
 | `PrefabAuto` / `PrefabAuto<T>` | 풀링 키. `Create` `CreateForUI` `Release` `Preload` |
-| `PrefabLoader` | 정적 진입점. 씬 풀 / 글로벌 풀을 고르고, 반환 시 소속 풀을 찾는다 |
-| `PrefabPoolCore` | 경로별 스택 풀의 실체. 활성 인스턴스의 소속 경로를 기록한다 |
-| `ScenePrefabPool` / `GlobalPrefabPool` | 풀의 수명. 씬 전환 시 해제 / 앱 종료까지 유지 |
+| `PrefabLoader` | 정적 진입점. 씬 풀 / 글로벌 풀을 고르고, 반환 시 소속 풀을 찾는다. `PruneDestroyed` · `ClearScenePool` |
+| `PrefabPoolCore` | 경로별 스택 풀의 실체. 밖에 나간 인스턴스의 소속 경로를 기록한다. `PruneDestroyed` · `Clear` |
+| `ScenePrefabPool` / `GlobalPrefabPool` | 풀의 수명. 씬 전환 시 해제 / 앱 종료까지 유지하며 씬이 내려갈 때마다 장부 정리 |
 | `IPoolable` | `OnSpawn` / `OnDespawn`. 상태 초기화와 이벤트 해제를 여기서 한다 |
 | `RecyclableScrollView` | `ScrollRect` 파생. 보이는 범위의 셀만 만들어 재활용한다 |
 | `IRecyclableScrollDataSource` | 항목 수와 셀 바인딩을 제공한다 |
@@ -671,7 +730,7 @@ Auto.Release(comp)
 
 ## 코드 생성 진입점
 
-산출물을 고칠 일이 있으면 아래를 본다. 전부 `Assets/Scripts/DataLoader/Editor/` 에 있다.
+산출물을 고칠 일이 있으면 아래를 본다. 전부 패키지 `Editor/DataLoader/` 에 있다.
 
 ### ① 원본 → JSON
 
@@ -710,3 +769,13 @@ Auto.Release(comp)
 두 단계 모두 내용이 같은 파일은 다시 쓰지 않는다 (Unity 재임포트 방지). 자료형 해석은 `SourceTableConverter` 한 곳에만 있으므로, 포맷을 추가해도 규칙이 갈리지 않는다.
 
 ① 과 ② 는 한 실행 안에서 이어지므로 중간 파일을 거치지 않는다. `ConvertedTable` 이 그대로 넘어간다.
+
+---
+
+## 버전 올리기
+
+1. `Packages/com.jinhyung.gameframework/package.json` 의 `version` 을 올린다.
+2. 같은 번호로 태그를 붙여 푸시한다 (`v0.2.0`).
+3. 사용하는 쪽은 URL 의 `#v0.1.0` 을 `#v0.2.0` 으로 바꾼다.
+
+패키지 안의 파일은 `.meta` 까지 전부 커밋한다. 읽기 전용으로 설치되는 쪽은 `.meta` 를 새로 만들 수 없어서, `.meta` 가 빠진 파일은 무시된다.

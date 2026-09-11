@@ -10,10 +10,10 @@ namespace Game_DataLoader
     {
         public string SourceFolder = "_DataExporter/GameData";
         public string JsonOutput = "Assets/GameData";
-        public string GeneratedFolder = "Assets/Scripts/DataLoader/Generated";
-        public string ContainersFolder = "Assets/Scripts/DataLoader/Containers";
-        public string GameEnumFile = "Assets/Scripts/DataLoader/GameEnum.cs";
-        public string GameRootFile = "Assets/Scripts/Game/Core/GameRoot.Generated.cs";
+        public string GeneratedFolder = "Assets/Scripts/GameData/Generated";
+        public string ContainersFolder = "Assets/Scripts/GameData/Containers";
+        public string GameEnumFile = "Assets/Scripts/GameData/GameEnum.cs";
+        public string GameRootFile = "Assets/Scripts/GameData/GameRoot.Generated.cs";
 
         public DataPipelinePaths Clone()
         {

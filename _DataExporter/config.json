@@ -2,10 +2,10 @@
   "Paths": {
     "SourceFolder": "_DataExporter/GameData",
     "JsonOutput": "Assets/GameData",
-    "GeneratedFolder": "Assets/Scripts/DataLoader/Generated",
-    "ContainersFolder": "Assets/Scripts/DataLoader/Containers",
-    "GameEnumFile": "Assets/Scripts/DataLoader/GameEnum.cs",
-    "GameRootFile": "Assets/Scripts/Game/Core/GameRoot.Generated.cs"
+    "GeneratedFolder": "Assets/Scripts/GameData/Generated",
+    "ContainersFolder": "Assets/Scripts/GameData/Containers",
+    "GameEnumFile": "Assets/Scripts/GameData/GameEnum.cs",
+    "GameRootFile": "Assets/Scripts/GameData/GameRoot.Generated.cs"
   },
   "LoadFileDataFileName": "LoadDataFile.xlsx",
   "ExceptCheckEmptySheet": [],

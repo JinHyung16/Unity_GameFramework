@@ -167,7 +167,7 @@ namespace Game_DataLoader
             }
 
             EditorGUILayout.LabelField(
-                "Assets/Scripts/DataLoader/Editor/Sources/ 에 로더를 추가하면 자동으로 잡힙니다.",
+                "IDataSourceLoader 를 구현한 클래스를 프로젝트 Editor 폴더 어디에 두든 자동으로 잡힙니다.",
                 EditorStyles.miniLabel);
 
             foreach (IDataSourceLoader loader in DataSourceRegistry.All)
