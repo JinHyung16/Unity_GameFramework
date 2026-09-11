@@ -30,21 +30,21 @@ Unity 패키지 세 개는 `package.json` 의 `dependencies` 라서 설치할 �
 Package Manager → **+** → **Add package from git URL**
 
 ```
-https://github.com/JinHyung16/Unity_GameFramework.git?path=/Packages/com.jinhyung.gameframework#v0.1.0
+https://github.com/JinHyung16/Unity_GameFramework.git?path=/Packages/com.jinhyung.gameframework#v0.0.1
 ```
 
 `Packages/manifest.json` 에 직접 넣어도 된다.
 
 ```json
-"com.jinhyung.gameframework": "https://github.com/JinHyung16/Unity_GameFramework.git?path=/Packages/com.jinhyung.gameframework#v0.1.0"
+"com.jinhyung.gameframework": "https://github.com/JinHyung16/Unity_GameFramework.git?path=/Packages/com.jinhyung.gameframework#v0.0.1"
 ```
 
 | URL 부분 | 뜻 |
 |---------|-----|
 | `?path=` | 저장소가 Unity 프로젝트 전체라서 그 안의 패키지 폴더를 가리킨다 |
-| `#v0.1.0` | 태그 고정. 빼면 기본 브랜치의 그 시점 커밋이 `packages-lock.json` 에 박혀 이후 갱신이 자동으로 되지 않는다 |
+| `#v0.0.1` | 태그 고정. 빼면 기본 브랜치의 그 시점 커밋이 `packages-lock.json` 에 박혀 이후 갱신이 자동으로 되지 않는다 |
 
-private 저장소면 받는 PC 에 GitHub 인증이 있어야 한다. SSH 로는 `git@github.com:JinHyung16/Unity_GameFramework.git?path=...#v0.1.0` 형태다.
+private 저장소면 받는 PC 에 GitHub 인증이 있어야 한다. SSH 로는 `git@github.com:JinHyung16/Unity_GameFramework.git?path=...#v0.0.1` 형태다.
 
 설치한 뒤 프로젝트에서 할 일:
 
@@ -775,7 +775,7 @@ Auto.Release(comp)
 ## 버전 올리기
 
 1. `Packages/com.jinhyung.gameframework/package.json` 의 `version` 을 올린다.
-2. 같은 번호로 태그를 붙여 푸시한다 (`v0.2.0`).
-3. 사용하는 쪽은 URL 의 `#v0.1.0` 을 `#v0.2.0` 으로 바꾼다.
+2. 같은 번호로 태그를 붙여 푸시한다 (`v0.0.2`).
+3. 사용하는 쪽은 URL 의 `#v0.0.1` 을 `#v0.0.2` 으로 바꾼다.
 
 패키지 안의 파일은 `.meta` 까지 전부 커밋한다. 읽기 전용으로 설치되는 쪽은 `.meta` 를 새로 만들 수 없어서, `.meta` 가 빠진 파일은 무시된다.

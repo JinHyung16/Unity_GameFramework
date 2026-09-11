@@ -1,6 +1,6 @@
 {
   "name": "com.jinhyung.gameframework",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "displayName": "Game Framework",
   "description": "UIFramework (Window / Prefab Pool / Recyclable Scroll) + DataLoader (xlsx, csv, js, ts, py -> JSON -> C# containers).",
   "unity": "6000.3",
